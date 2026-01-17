@@ -2,75 +2,61 @@
 
 function createMarker() {
   if (!AppState.fence) return;
-  
   // Remove old marker
   if (AppState.marker) {
     map.removeLayer(AppState.marker);
   }
-  
-  // Create image marker icon (80x80px rounded square)
-  const icon = L.divIcon({
-    className: 'image-marker',
-    html: AppState.image ? `<img src="${AppState.image.src}" />` : '<div class="placeholder-marker"></div>',
-    iconSize: [80, 80],
-    iconAnchor: [40, 40]
-  });
-  
-  // Add marker at center by default
-  const center = AppState.fence.getBounds().getCenter();
-  AppState.marker = L.marker(center, { icon }).addTo(map);
-  
-  // Show/hide based on zoom and hover state
-  const zoom = map.getZoom();
-  if (zoom >= 16 || AppState.adInfoHovered) {
-    showMarker();
-  } else {
-    hideMarker();
-  }
-  
-  console.log('📍 Marker created at center');
-}
-
-// Place marker at specific location
-function placeMarkerAt(latlng) {
-  if (!AppState.fence) return;
-  
-  // Remove old marker
-  if (AppState.marker) {
-    map.removeLayer(AppState.marker);
-  }
-  
   // Create image marker icon
   const icon = L.divIcon({
     className: 'image-marker',
     html: AppState.image ? `<img src="${AppState.image.src}" />` : '<div class="placeholder-marker"></div>',
-    iconSize: [80, 80],
-    iconAnchor: [40, 40]
+    iconSize: [MARKER.SIZE, MARKER.SIZE],
+    iconAnchor: [MARKER.HALF_SIZE, MARKER.HALF_SIZE]
   });
-  
-  // Add marker at clicked location
-  AppState.marker = L.marker(latlng, { icon }).addTo(map);
-  
+  // Add marker at center by default
+  const center = AppState.fence.getBounds().getCenter();
+  AppState.marker = L.marker(center, { icon }).addTo(map);
   // Show/hide based on zoom and hover state
   const zoom = map.getZoom();
-  if (zoom >= 16 || AppState.adInfoHovered) {
+  if (zoom >= ZOOM.AD_INFO_THRESHOLD || AppState.adInfoHovered) {
     showMarker();
   } else {
     hideMarker();
   }
-  
+  console.log('📍 Marker created at center');
+}
+
+function placeMarkerAt(latlng) {
+  if (!AppState.fence) return;
+  // Remove old marker
+  if (AppState.marker) {
+    map.removeLayer(AppState.marker);
+  }
+  // Create image marker icon
+  const icon = L.divIcon({
+    className: 'image-marker',
+    html: AppState.image ? `<img src="${AppState.image.src}" />` : '<div class="placeholder-marker"></div>',
+    iconSize: [MARKER.SIZE, MARKER.SIZE],
+    iconAnchor: [MARKER.HALF_SIZE, MARKER.HALF_SIZE]
+  });
+  // Add marker at clicked location
+  AppState.marker = L.marker(latlng, { icon }).addTo(map);
+  // Show/hide based on zoom and hover state
+  const zoom = map.getZoom();
+  if (zoom >= ZOOM.AD_INFO_THRESHOLD || AppState.adInfoHovered) {
+    showMarker();
+  } else {
+    hideMarker();
+  }
   // Update comment bubble position
   positionCommentBubble();
-  
   console.log('📍 Marker placed at:', latlng);
 }
 
-// Update marker position when fence moves (for auto-center mode)
 function updateMarker() {
   // Don't auto-update if user manually placed marker
 }
 
-// Show marker (called when zoomed in)
 function showMarker() {
   if (AppState.marker) {
     AppState.marker.setOpacity(1);
@@ -78,7 +64,6 @@ function showMarker() {
   }
 }
 
-// Hide marker (called when zoomed out)
 function hideMarker() {
   if (AppState.marker) {
     AppState.marker.setOpacity(0);

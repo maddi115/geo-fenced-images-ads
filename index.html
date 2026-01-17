@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
   <link rel="stylesheet" href="style.css?v=hover">
+    <link rel="stylesheet" href="src/features/marker.css">
   <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=hover">
   <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=hover">
   <link rel="stylesheet" href="src/interactions/fence-hover-cursor.css?v=hover">
@@ -27,6 +28,8 @@
   
   <!-- Core -->
   <script src="src/core/state-manager.js?v=hover"></script>
+  <script src="src/config/constants.js?v=hover"></script>
+  <script src="src/utils/element-builder.js?v=hover"></script>
   <script src="src/core/app-init.js?v=hover"></script>
   
   <!-- State Management -->
@@ -37,6 +40,7 @@
   <!-- Rendering -->
   <script src="src/rendering/canvas-renderer.js?v=hover"></script>
   <script src="src/rendering/zoom-controller.js?v=hover"></script>
+  <script src="src/rendering/visibility-manager.js?v=hover"></script>
   
   <!-- Features -->
   <script src="src/features/fence-drawer.js?v=hover"></script>
@@ -45,6 +49,9 @@
   
   <!-- Components -->
   <script src="src/components/comment-bubble/comment-bubble.js?v=hover"></script>
+  <script src="src/components/comment-bubble/bubble-ui-builder.js?v=hover"></script>
+  <script src="src/components/comment-bubble/bubble-positioning.js?v=hover"></script>
+  <script src="src/components/comment-bubble/bubble-events.js?v=hover"></script>
   
   <!-- Interactions -->
   <script src="src/interactions/hover-reveal-ad-info.js?v=hover"></script>

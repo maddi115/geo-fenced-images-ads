@@ -1,0 +1,22 @@
+// Application constants
+const ZOOM = {
+  AD_INFO_THRESHOLD: 16
+};
+
+const MARKER = {
+  SIZE: 80,
+  HALF_SIZE: 40
+};
+
+const BUBBLE = {
+  WIDTH: 240,
+  HEIGHT: 110,
+  ARROW_HEIGHT: 10,
+  GAP_ABOVE_MARKER: 15
+};
+
+const COMMENT = {
+  CHAR_LIMIT: 70,
+  CHAR_WARNING_THRESHOLD: 51,
+  CHAR_DANGER_THRESHOLD: 66
+};
