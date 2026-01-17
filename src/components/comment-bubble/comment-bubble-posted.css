@@ -1,0 +1,36 @@
+/* Posted State Styles - Applied after user clicks Post button */
+
+/* Textarea in posted state - read-only, muted appearance */
+.comment-bubble textarea.posted-state {
+  background: #f5f5f5;
+  color: #666;
+  border: 1px dashed #ccc;
+  cursor: default;
+  pointer-events: none;
+}
+
+.comment-bubble textarea.posted-state::placeholder {
+  color: transparent;
+}
+
+/* Character counter in posted state - shows checkmark badge */
+.char-counter.posted {
+  color: #00cc66;
+  font-weight: 600;
+}
+
+.char-counter.posted::before {
+  background: #00cc66;
+}
+
+/* Post button in posted state - green, disabled */
+.post-btn.posted {
+  background: #00cc66;
+  cursor: default;
+  pointer-events: none;
+}
+
+.post-btn.posted:hover {
+  background: #00cc66;
+  transform: none;
+}

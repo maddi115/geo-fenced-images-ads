@@ -1,0 +1,87 @@
+// Manage marker at fence center or custom location
+
+function createMarker() {
+  if (!AppState.fence) return;
+  
+  // Remove old marker
+  if (AppState.marker) {
+    map.removeLayer(AppState.marker);
+  }
+  
+  // Create image marker icon (80x80px rounded square)
+  const icon = L.divIcon({
+    className: 'image-marker',
+    html: AppState.image ? `<img src="${AppState.image.src}" />` : '<div class="placeholder-marker"></div>',
+    iconSize: [80, 80],
+    iconAnchor: [40, 40]
+  });
+  
+  // Add marker at center by default
+  const center = AppState.fence.getBounds().getCenter();
+  AppState.marker = L.marker(center, { icon }).addTo(map);
+  
+  // Show marker if zoomed in, hide if zoomed out
+  const zoom = map.getZoom();
+  if (zoom >= 15) {
+    showMarker();
+  } else {
+    hideMarker();
+  }
+  
+  console.log('📍 Marker created at center');
+}
+
+// Place marker at specific location
+function placeMarkerAt(latlng) {
+  if (!AppState.fence) return;
+  
+  // Remove old marker
+  if (AppState.marker) {
+    map.removeLayer(AppState.marker);
+  }
+  
+  // Create image marker icon
+  const icon = L.divIcon({
+    className: 'image-marker',
+    html: AppState.image ? `<img src="${AppState.image.src}" />` : '<div class="placeholder-marker"></div>',
+    iconSize: [80, 80],
+    iconAnchor: [40, 40]
+  });
+  
+  // Add marker at clicked location
+  AppState.marker = L.marker(latlng, { icon }).addTo(map);
+  
+  // Show marker if zoomed in
+  const zoom = map.getZoom();
+  if (zoom >= 15) {
+    showMarker();
+  } else {
+    hideMarker();
+  }
+  
+  // Update comment bubble position
+  positionCommentBubble();
+  
+  console.log('📍 Marker placed at:', latlng);
+}
+
+// Update marker position when fence moves (for auto-center mode)
+function updateMarker() {
+  // Don't auto-update if user manually placed marker
+}
+
+// Show marker (called when zoomed in)
+function showMarker() {
+  if (AppState.marker) {
+    AppState.marker.setOpacity(1);
+    console.log('👁️ Marker visible');
+  }
+}
+
+// Hide marker (called when zoomed out)
+function hideMarker() {
+  if (AppState.marker) {
+    AppState.marker.setOpacity(0);
+    console.log('🙈 Marker hidden');
+  }
+}

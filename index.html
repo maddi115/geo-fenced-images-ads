@@ -2,20 +2,56 @@
 <html>
 <head>
   <title>Geofence Studio</title>
+  <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=posted">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=posted">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=posted">
 </head>
 <body>
   <div class="interface-layer">
-    <div id="zoomLabel" style="font-size:10px; font-weight:700; color:#0066ff;">STANDBY</div>
+    <div id="zoomLabel">STANDBY</div>
     <input type="file" id="upload" accept="image/*">
+    <button id="placeMarkerBtn" onclick="togglePlacementMode()">Place Marker</button>
     <button onclick="location.reload()">Reset</button>
   </div>
   <div id="map"></div>
+  
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  <script src="render-engine.js"></script>
-  <script src="app-core.js"></script>
+  
+  <!-- Core -->
+  <script src="src/core/state-manager.js?v=posted"></script>
+  <script src="src/core/app-init.js?v=posted"></script>
+  
+  <!-- State Management -->
+  <script src="src/state/state-tracking.js?v=posted"></script>
+  <script src="src/state/fence-drawing-state.js?v=posted"></script>
+  <script src="src/state/fence-complete-state.js?v=posted"></script>
+  
+  <!-- Rendering -->
+  <script src="src/rendering/canvas-renderer.js?v=posted"></script>
+  <script src="src/rendering/zoom-controller.js?v=posted"></script>
+  
+  <!-- Features -->
+  <script src="src/features/fence-drawer.js?v=posted"></script>
+  <script src="src/features/image-uploader.js?v=posted"></script>
+  <script src="src/features/marker-manager.js?v=posted"></script>
+  
+  <!-- Components -->
+  <script src="src/components/comment-bubble/comment-bubble.js?v=posted"></script>
+  
+  <!-- UI Components -->
+  <script src="src/ui/interface-controls.js?v=posted"></script>
+  <script src="src/ui/place-marker-button.js?v=posted"></script>
+  <script src="src/ui/marker-placer.js?v=posted"></script>
+  <script src="src/ui/fence-style-controller.js?v=posted"></script>
+  
+  <!-- Utils -->
+  <script src="src/utils/event-handlers.js?v=posted"></script>
 </body>
 </html>
