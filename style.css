@@ -1,18 +1,16 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
 #map { width: 100vw; height: 100vh; }
-
 .interface-layer {
   position: absolute;
   top: 20px;
-  left: 20px;
+  left: 200px;
   z-index: 1000;
   display: flex;
   gap: 10px;
   align-items: center;
   flex-wrap: wrap;
 }
-
 #zoomLabel {
   font-size: 10px;
   font-weight: 700;
@@ -22,7 +20,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
   border-radius: 4px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
-
 input[type="file"], button {
   padding: 8px 12px;
   border: none;
@@ -34,22 +31,18 @@ input[type="file"], button {
   font-weight: 600;
   transition: all 0.2s;
 }
-
 input[type="file"]:hover, button:hover {
   background: #0052cc;
 }
-
 /* Active state for Place Marker button */
 #placeMarkerBtn.active {
   background: #00cc66;
   animation: pulse 1.5s infinite;
 }
-
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
 }
-
 /* Image Marker - 80x80px rounded square */
 .image-marker {
   width: 80px !important;
@@ -57,7 +50,6 @@ input[type="file"]:hover, button:hover {
   background: transparent !important;
   border: none !important;
 }
-
 .image-marker img {
   width: 80px;
   height: 80px;
@@ -67,7 +59,6 @@ input[type="file"]:hover, button:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   display: block;
 }
-
 /* Placeholder marker (if no image uploaded yet) */
 .placeholder-marker {
   width: 80px;

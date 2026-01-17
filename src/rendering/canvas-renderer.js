@@ -13,7 +13,7 @@ function scheduleRender() {
 function hexToRgb(hex) {
   const shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
   hex = hex.replace(shorthandRegex, (m, r, g, b) => r + r + g + g + b + b);
-  
+
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result ? {
     r: parseInt(result[1], 16),
@@ -24,7 +24,7 @@ function hexToRgb(hex) {
 
 function render() {
   if (!AppState.fence) return;
-  
+
   const zoom = map.getZoom();
   const size = map.getSize();
 
@@ -46,7 +46,7 @@ function render() {
   });
   ctx.closePath();
 
-  // Show image if: zoom < 16 AND not hovered AND image exists
+  // Show image at LOW zoom (zoomed out), show blue fill at HIGH zoom (zoomed in)
   if (zoom < 16 && AppState.image && !AppState.adInfoHovered) {
     ctx.save();
     ctx.clip();
@@ -69,7 +69,7 @@ function render() {
   ctx.strokeStyle = `rgb(${borderRgb.r}, ${borderRgb.g}, ${borderRgb.b})`;
   ctx.lineWidth = style.borderWidth;
   ctx.stroke();
-  
+
   updateZoomView(zoom);
   updateFenceCursor();
 }

@@ -3,68 +3,58 @@
 <head>
   <title>Geofence Studio</title>
   <meta charset="UTF-8">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
-  <link rel="stylesheet" href="style.css?v=hover">
-    <link rel="stylesheet" href="src/features/marker.css">
-  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=hover">
-  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=hover">
-  <link rel="stylesheet" href="src/interactions/fence-hover-cursor.css?v=hover">
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="src/features/marker.css">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css">
 </head>
 <body>
   <div class="interface-layer">
     <div id="zoomLabel">STANDBY</div>
     <input type="file" id="upload" accept="image/*">
-    <button id="placeMarkerBtn" onclick="togglePlacementMode()">Place Marker</button>
     <button onclick="location.reload()">Reset</button>
   </div>
   <div id="map"></div>
-  
+
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-  
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.min.js"></script>
+
   <!-- Core -->
-  <script src="src/core/state-manager.js?v=hover"></script>
-  <script src="src/config/constants.js?v=hover"></script>
-  <script src="src/utils/element-builder.js?v=hover"></script>
-  <script src="src/core/app-init.js?v=hover"></script>
-  
-  <!-- State Management -->
-  <script src="src/state/state-tracking.js?v=hover"></script>
-  <script src="src/state/fence-drawing-state.js?v=hover"></script>
-  <script src="src/state/fence-complete-state.js?v=hover"></script>
-  
-  <!-- Rendering -->
-  <script src="src/rendering/canvas-renderer.js?v=hover"></script>
-  <script src="src/rendering/zoom-controller.js?v=hover"></script>
-  <script src="src/rendering/visibility-manager.js?v=hover"></script>
-  
-  <!-- Features -->
-  <script src="src/features/fence-drawer.js?v=hover"></script>
-  <script src="src/features/image-uploader.js?v=hover"></script>
-  <script src="src/features/marker-manager.js?v=hover"></script>
-  
-  <!-- Components -->
-  <script src="src/components/comment-bubble/comment-bubble.js?v=hover"></script>
-  <script src="src/components/comment-bubble/bubble-ui-builder.js?v=hover"></script>
-  <script src="src/components/comment-bubble/bubble-positioning.js?v=hover"></script>
-  <script src="src/components/comment-bubble/bubble-events.js?v=hover"></script>
-  
-  <!-- Interactions -->
-  <script src="src/interactions/hover-reveal-ad-info.js?v=hover"></script>
-  <script src="src/interactions/fence-hover-manager.js?v=hover"></script>
-  <script src="src/interactions/disable-double-click-zoom.js?v=hover"></script>
-  
-  <!-- UI Components -->
-  <script src="src/ui/interface-controls.js?v=hover"></script>
-  <script src="src/ui/place-marker-button.js?v=hover"></script>
-  <script src="src/ui/marker-placer.js?v=hover"></script>
-  <script src="src/ui/fence-style-controller.js?v=hover"></script>
-  
+  <script src="src/config/constants.js"></script>
+  <script src="src/config/map-config.js"></script>
+  <script src="src/core/app-state.js"></script>
+  <script src="src/core/app-init.js"></script>
+
   <!-- Utils -->
-  <script src="src/utils/event-handlers.js?v=hover"></script>
+  <script src="src/utils/element-builder.js"></script>
+
+  <!-- Pragmatic Performance Optimizations -->
+  <script src="src/pragmatic-performance-optimizations/performance-monitor.js"></script>
+  <script src="src/pragmatic-performance-optimizations/fence-visibility-threshold.js"></script>
+  <script src="src/pragmatic-performance-optimizations/canvas-clearer.js"></script>
+  <script src="src/pragmatic-performance-optimizations/image-preprocessor.js"></script>
+  <script src="src/pragmatic-performance-optimizations/canvas-cache.js"></script>
+  <script src="src/pragmatic-performance-optimizations/viewport-culler.js"></script>
+  <script src="src/pragmatic-performance-optimizations/render-scheduler.js"></script>
+
+  <!-- Components -->
+  <script src="src/components_new/canvas-component.js"></script>
+  <script src="src/components_new/marker-component.js"></script>
+  <script src="src/components_new/comment-component.js"></script>
+
+  <!-- Behaviors -->
+  <script src="src/behaviors/visibility-behavior.js"></script>
+  <script src="src/behaviors/hover-persistence-behavior.js"></script>
+  <script src="src/behaviors/hover-behavior.js"></script>
+  <script src="src/behaviors/zoom-behavior.js"></script>
+  <script src="src/behaviors/fence-behavior.js"></script>
+
+  <!-- UI -->
+  <script src="src/ui/controls.js"></script>
 </body>
 </html>

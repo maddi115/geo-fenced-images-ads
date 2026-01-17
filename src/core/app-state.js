@@ -1,13 +1,17 @@
-// Global application state
+// Single source of truth for application state
 window.AppState = {
   fence: null,
   image: null,
-  commentText: "",
-  commentPosted: false,
   marker: null,
   commentBubble: null,
+  commentText: "",
+  commentPosted: false,
   drawnItems: null,
-  adInfoHovered: false,
+  
+  // View state
+  hovered: false,
+  
+  // Style
   fenceStyle: {
     fillColor: '#0066ff',
     fillOpacity: 0.3,

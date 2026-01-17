@@ -11,6 +11,12 @@ map.on(L.Draw.Event.CREATED, (e) => {
   AppState.fence = e.layer;
   AppState.drawnItems.addLayer(AppState.fence);
   
+  // Hide Leaflet's default rendering - canvas will handle it
+  AppState.fence.setStyle({
+    fillOpacity: 0,
+    opacity: 0
+  });
+  
   // Mark as placed
   onFencePlaced();
   
