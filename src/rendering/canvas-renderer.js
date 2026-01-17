@@ -46,7 +46,8 @@ function render() {
   });
   ctx.closePath();
 
-  if (zoom <= 16 && AppState.image) {
+  // Show image if: zoom < 16 AND not hovered AND image exists
+  if (zoom < 16 && AppState.image && !AppState.adInfoHovered) {
     ctx.save();
     ctx.clip();
     const bounds = AppState.fence.getBounds();
@@ -55,6 +56,7 @@ function render() {
     ctx.drawImage(AppState.image, nw.x, nw.y, se.x - nw.x, se.y - nw.y);
     ctx.restore();
   } else {
+    // Show blue fill if: hovered OR zoom >= 16
     const style = AppState.fenceStyle;
     const rgb = hexToRgb(style.fillColor);
     const fillString = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${style.fillOpacity})`;
@@ -69,4 +71,5 @@ function render() {
   ctx.stroke();
   
   updateZoomView(zoom);
+  updateFenceCursor();
 }

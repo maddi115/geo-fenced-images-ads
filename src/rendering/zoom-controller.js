@@ -1,16 +1,27 @@
-// Control view based on zoom level
+// Control view based on zoom level and hover state
 function updateZoomView(zoom) {
   const label = document.getElementById('zoomLabel');
   
-  if (zoom >= 17 && AppState.fence) {
+  // Zoom 16+: Always show ad info
+  if (zoom >= 16) {
     label.textContent = "TECHNICAL VIEW";
     showCommentBubble();
     showMarker();
-  } else if (zoom <= 16 && AppState.image) {
+  }
+  // Hovered at lower zoom
+  else if (AppState.adInfoHovered && zoom < 16) {
+    label.textContent = "AD INFO PREVIEW";
+    showCommentBubble();
+    showMarker();
+  }
+  // Normal image view
+  else if (zoom < 16 && AppState.image) {
     label.textContent = "MACRO VIEW";
     hideCommentBubble();
     hideMarker();
-  } else {
+  }
+  // No image uploaded yet
+  else {
     label.textContent = "STANDBY";
     hideCommentBubble();
     hideMarker();

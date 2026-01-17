@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Geofence Studio</title>
+  <meta charset="UTF-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <link rel="stylesheet" href="style.css?v=dblclick">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=dblclick">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=dblclick">
+  <link rel="stylesheet" href="src/interactions/fence-hover-cursor.css?v=dblclick">
+</head>
+<body>
+  <div class="interface-layer">
+    <div id="zoomLabel">STANDBY</div>
+    <input type="file" id="upload" accept="image/*">
+    <button id="placeMarkerBtn" onclick="togglePlacementMode()">Place Marker</button>
+    <button onclick="location.reload()">Reset</button>
+  </div>
+  <div id="map"></div>
+  
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  
+  <!-- Core -->
+  <script src="src/core/state-manager.js?v=dblclick"></script>
+  <script src="src/core/app-init.js?v=dblclick"></script>
+  
+  <!-- State Management -->
+  <script src="src/state/state-tracking.js?v=dblclick"></script>
+  <script src="src/state/fence-drawing-state.js?v=dblclick"></script>
+  <script src="src/state/fence-complete-state.js?v=dblclick"></script>
+  
+  <!-- Rendering -->
+  <script src="src/rendering/canvas-renderer.js?v=dblclick"></script>
+  <script src="src/rendering/zoom-controller.js?v=dblclick"></script>
+  
+  <!-- Features -->
+  <script src="src/features/fence-drawer.js?v=dblclick"></script>
+  <script src="src/features/image-uploader.js?v=dblclick"></script>
+  <script src="src/features/marker-manager.js?v=dblclick"></script>
+  
+  <!-- Components -->
+  <script src="src/components/comment-bubble/comment-bubble.js?v=dblclick"></script>
+  
+  <!-- Interactions -->
+  <script src="src/interactions/reveal-ad-info-onclick.js?v=dblclick"></script>
+  <script src="src/interactions/map-pan-reset.js?v=dblclick"></script>
+  <script src="src/interactions/fence-hover-manager.js?v=dblclick"></script>
+  <script src="src/interactions/disable-double-click-zoom.js?v=dblclick"></script>
+  
+  <!-- UI Components -->
+  <script src="src/ui/interface-controls.js?v=dblclick"></script>
+  <script src="src/ui/place-marker-button.js?v=dblclick"></script>
+  <script src="src/ui/marker-placer.js?v=dblclick"></script>
+  <script src="src/ui/fence-style-controller.js?v=dblclick"></script>
+  
+  <!-- Utils -->
+  <script src="src/utils/event-handlers.js?v=dblclick"></script>
+</body>
+</html>

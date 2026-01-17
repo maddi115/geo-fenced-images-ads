@@ -1,0 +1,10 @@
+/* Pointer cursor on fence hover (only at zoom ≤17) */
+
+/* This will be applied dynamically via JS */
+.fence-clickable {
+  cursor: pointer !important;
+}
+
+.fence-clickable path {
+  cursor: pointer !important;
+}

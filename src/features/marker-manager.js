@@ -20,9 +20,9 @@ function createMarker() {
   const center = AppState.fence.getBounds().getCenter();
   AppState.marker = L.marker(center, { icon }).addTo(map);
   
-  // Show marker if zoomed in, hide if zoomed out
+  // Show/hide based on zoom and hover state
   const zoom = map.getZoom();
-  if (zoom >= 15) {
+  if (zoom >= 16 || AppState.adInfoHovered) {
     showMarker();
   } else {
     hideMarker();
@@ -51,9 +51,9 @@ function placeMarkerAt(latlng) {
   // Add marker at clicked location
   AppState.marker = L.marker(latlng, { icon }).addTo(map);
   
-  // Show marker if zoomed in
+  // Show/hide based on zoom and hover state
   const zoom = map.getZoom();
-  if (zoom >= 15) {
+  if (zoom >= 16 || AppState.adInfoHovered) {
     showMarker();
   } else {
     hideMarker();

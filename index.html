@@ -8,9 +8,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
-  <link rel="stylesheet" href="style.css?v=posted">
-  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=posted">
-  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=posted">
+  <link rel="stylesheet" href="style.css?v=hover">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble.css?v=hover">
+  <link rel="stylesheet" href="src/components/comment-bubble/comment-bubble-posted.css?v=hover">
+  <link rel="stylesheet" href="src/interactions/fence-hover-cursor.css?v=hover">
 </head>
 <body>
   <div class="interface-layer">
@@ -25,33 +26,38 @@
   <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
   
   <!-- Core -->
-  <script src="src/core/state-manager.js?v=posted"></script>
-  <script src="src/core/app-init.js?v=posted"></script>
+  <script src="src/core/state-manager.js?v=hover"></script>
+  <script src="src/core/app-init.js?v=hover"></script>
   
   <!-- State Management -->
-  <script src="src/state/state-tracking.js?v=posted"></script>
-  <script src="src/state/fence-drawing-state.js?v=posted"></script>
-  <script src="src/state/fence-complete-state.js?v=posted"></script>
+  <script src="src/state/state-tracking.js?v=hover"></script>
+  <script src="src/state/fence-drawing-state.js?v=hover"></script>
+  <script src="src/state/fence-complete-state.js?v=hover"></script>
   
   <!-- Rendering -->
-  <script src="src/rendering/canvas-renderer.js?v=posted"></script>
-  <script src="src/rendering/zoom-controller.js?v=posted"></script>
+  <script src="src/rendering/canvas-renderer.js?v=hover"></script>
+  <script src="src/rendering/zoom-controller.js?v=hover"></script>
   
   <!-- Features -->
-  <script src="src/features/fence-drawer.js?v=posted"></script>
-  <script src="src/features/image-uploader.js?v=posted"></script>
-  <script src="src/features/marker-manager.js?v=posted"></script>
+  <script src="src/features/fence-drawer.js?v=hover"></script>
+  <script src="src/features/image-uploader.js?v=hover"></script>
+  <script src="src/features/marker-manager.js?v=hover"></script>
   
   <!-- Components -->
-  <script src="src/components/comment-bubble/comment-bubble.js?v=posted"></script>
+  <script src="src/components/comment-bubble/comment-bubble.js?v=hover"></script>
+  
+  <!-- Interactions -->
+  <script src="src/interactions/hover-reveal-ad-info.js?v=hover"></script>
+  <script src="src/interactions/fence-hover-manager.js?v=hover"></script>
+  <script src="src/interactions/disable-double-click-zoom.js?v=hover"></script>
   
   <!-- UI Components -->
-  <script src="src/ui/interface-controls.js?v=posted"></script>
-  <script src="src/ui/place-marker-button.js?v=posted"></script>
-  <script src="src/ui/marker-placer.js?v=posted"></script>
-  <script src="src/ui/fence-style-controller.js?v=posted"></script>
+  <script src="src/ui/interface-controls.js?v=hover"></script>
+  <script src="src/ui/place-marker-button.js?v=hover"></script>
+  <script src="src/ui/marker-placer.js?v=hover"></script>
+  <script src="src/ui/fence-style-controller.js?v=hover"></script>
   
   <!-- Utils -->
-  <script src="src/utils/event-handlers.js?v=posted"></script>
+  <script src="src/utils/event-handlers.js?v=hover"></script>
 </body>
 </html>

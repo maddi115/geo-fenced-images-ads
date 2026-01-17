@@ -7,6 +7,7 @@ window.AppState = {
   marker: null,
   commentBubble: null,
   drawnItems: null,
+  adInfoHovered: false,
   fenceStyle: {
     fillColor: '#0066ff',
     fillOpacity: 0.01,
