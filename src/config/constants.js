@@ -9,10 +9,10 @@ const MARKER = {
 };
 
 const BUBBLE = {
-  WIDTH: 240,
-  HEIGHT: 110,
-  ARROW_HEIGHT: 10,
-  GAP_ABOVE_MARKER: 15
+  WIDTH: 280,
+  HEIGHT: 160,          // Fixed: actual rendered height
+  ARROW_HEIGHT: 8,      
+  GAP_ABOVE_MARKER: 16  // Increased for better visual spacing
 };
 
 const COMMENT = {
