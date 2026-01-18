@@ -14,7 +14,7 @@ window.AppState = {
   // Style
   fenceStyle: {
     fillColor: '#0066ff',
-    fillOpacity: 0.3,
+    fillOpacity: 0.09,
     borderColor: '#0066ff',
     borderWidth: 2
   }
