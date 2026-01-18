@@ -19,7 +19,12 @@ function updateCursor() {
 }
 
 map.on('zoomend', onZoomChange);
+
+// Render continuously during pan (no delay)
+map.on('move', scheduleRender);
+
+// Update bubble position when pan completes
 map.on('moveend', () => {
-  scheduleRender(); 
+  scheduleRender();
   positionCommentBubble();
 });
