@@ -1,4 +1,3 @@
-// Canvas rendering with image/fill logic
 let renderScheduled = false;
 
 function scheduleRender() {
@@ -24,28 +23,20 @@ function hexToRgb(hex) {
 
 function render() {
   if (!AppState.fence) return;
-  
-  // Clear and skip if shouldn't render
-  if (clearCanvasIfNeeded()) {
-    PerfMetrics.logRender(true);
-    return;
-  }
-  
-  const startTime = performance.now();
-  
+
   const zoom = map.getZoom();
   const size = map.getSize();
-  
+
   if (canvas.width !== size.x || canvas.height !== size.y) {
     canvas.width = size.x;
     canvas.height = size.y;
   }
-  
+
   L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
-  
+
   const latlngs = AppState.fence.getLatLngs()[0];
   const points = latlngs.map(ll => map.latLngToContainerPoint(ll));
-  
+
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.beginPath();
   points.forEach((p, i) => {
@@ -53,20 +44,13 @@ function render() {
     else ctx.lineTo(p.x, p.y);
   });
   ctx.closePath();
-  
-  // Render image or fill
+
   if (shouldShowImage()) {
     renderImage();
   } else {
     renderFill();
   }
-  
-  // Always render border
   renderBorder();
-  
-  const renderTime = performance.now() - startTime;
-  PerfMetrics.logRender(false);
-  PerfMetrics.logRenderTime(renderTime);
 }
 
 function shouldShowImage() {
@@ -81,13 +65,8 @@ function renderImage() {
   const nw = map.latLngToContainerPoint(bounds.getNorthWest());
   const se = map.latLngToContainerPoint(bounds.getSouthEast());
   
-  // Use cached/preprocessed image
-  const img = getCachedImage() || AppState.image;
-  if (img) {
-    if (getCachedImage()) {
-      PerfMetrics.logCacheHit();
-    }
-    ctx.drawImage(img, nw.x, nw.y, se.x - nw.x, se.y - nw.y);
+  if (AppState.image) {
+    ctx.drawImage(AppState.image, nw.x, nw.y, se.x - nw.x, se.y - nw.y);
   }
   ctx.restore();
 }

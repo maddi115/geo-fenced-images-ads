@@ -1,5 +1,6 @@
 // Fence creation and lifecycle
 map.on(L.Draw.Event.DRAWSTART, (e) => {
+  onFenceDrawStart();
   console.log('🟡 Drawing started');
 });
 
@@ -19,28 +20,24 @@ map.on(L.Draw.Event.CREATED, (e) => {
     color: '#000000'
   });
   
-  // Invalidate cache on new fence
-  invalidateImageCache();
-  
   // Create marker
   createMarker();
   
   // Attach hover
   attachHoverListeners();
   
-  // Cache if image exists
-  if (AppState.image) {
-    cacheClippedImage();
-  }
-  
   // Update view
   updateVisibility();
+  
+  // Mark as placed
+  onFencePlaced();
   
   console.log('✅ Fence created');
 });
 
 map.on(L.Draw.Event.DRAWSTOP, (e) => {
   if (!AppState.fence) {
+    onFenceDrawCancel();
     console.log('❌ Drawing cancelled');
   }
 });
