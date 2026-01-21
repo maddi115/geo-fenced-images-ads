@@ -1,0 +1,31 @@
+/* Posted State - shadcn muted style */
+
+.comment-bubble textarea.posted-state {
+  background: hsl(240 4.8% 95.9%);
+  color: hsl(240 3.8% 46.1%);
+  border: 1px solid hsl(240 5.9% 90%);
+  cursor: default;
+  pointer-events: none;
+}
+
+.comment-bubble textarea.posted-state::placeholder {
+  color: transparent;
+}
+
+.char-counter.posted {
+  color: hsl(142.1 76.2% 36.3%);
+}
+
+.char-counter.posted::before {
+  background: hsl(142.1 76.2% 36.3%);
+}
+
+.post-btn.posted {
+  background: hsl(142.1 76.2% 36.3%);
+  cursor: default;
+  pointer-events: none;
+}
+
+.post-btn.posted:hover {
+  background: hsl(142.1 76.2% 36.3%);
+}

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Geofence Studio</title>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css"/>
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="src/features/marker.css">
+  <link rel="stylesheet" href="src/styles/comment-bubble.css">
+  <link rel="stylesheet" href="src/styles/comment-bubble-posted.css">
+</head>
+<body>
+  <div class="interface-layer">
+    <div id="zoomLabel">STANDBY</div>
+    <input type="file" id="upload" accept="image/*">
+    <button onclick="location.reload()">Reset</button>
+  </div>
+  <div id="map"></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@maplibre/maplibre-gl-leaflet@0.0.20/leaflet-maplibre-gl.min.js"></script>
+  <!-- Core -->
+  <script src="src/config/constants.js"></script>
+  <script src="src/config/map-config.js"></script>
+  <script src="src/core/app-state.js"></script>
+  <script src="src/core/app-init.js"></script>
+  <!-- State -->
+  <script src="src/state/state-tracking.js"></script>
+  <script src="src/state/fence-drawing-state.js"></script>
+  <script src="src/state/fence-complete-state.js"></script>
+  <!-- Utils -->
+  <script src="src/utils/element-builder.js"></script>
+  <!-- Components -->
+  <script src="src/components/canvas-component.js"></script>
+  <script src="src/components/marker-component.js"></script>
+  <script src="src/components/comment-component.js"></script>
+  <!-- Behaviors -->
+  <script src="src/behaviors/visibility-behavior.js"></script>
+  <script src="src/behaviors/hover-persistence-behavior.js"></script>
+  <script src="src/behaviors/hover-behavior.js"></script>
+  <script src="src/behaviors/zoom-behavior.js"></script>
+  <script src="src/behaviors/fence-behavior.js"></script>
+  <!-- UI -->
+  <script src="src/ui/controls.js"></script>
+</body>
+</html>
