@@ -10,7 +10,9 @@ import { ICON, ZONE, PRICES } from '../../config-new/constants';
 export interface Draft {
   kind: PostKind;
   comment: string;
-  imageUrl: string | null; // icon + zone only
+  imageUrl: string | null; // icon + zone only (JPEG XL data URL)
+  previewUrl: string | null; // small PNG preview for the panel
+  imageBytes: number;
   at: LatLng | null; // pixel + icon
   coordinates: LatLng[] | null; // zone
   placing: boolean; // waiting for a map click (pixel + icon)
@@ -20,6 +22,8 @@ const emptyDraft = (kind: PostKind): Draft => ({
   kind,
   comment: '',
   imageUrl: null,
+  previewUrl: null,
+  imageBytes: 0,
   at: null,
   coordinates: null,
   placing: false,
@@ -63,11 +67,12 @@ export const postActions = {
   async setImage(file: File | undefined) {
     if (!file) return;
     try {
-      const url =
+      setMessage('Compressing to JPEG XL…');
+      const img =
         draft.kind === 'zone'
-          ? await resizeImageFile(file, ZONE.MAX_UPLOAD_PX, 'image/jpeg')
-          : await resizeImageFile(file, ICON.MAX_UPLOAD_PX, 'image/png');
-      setDraft('imageUrl', url);
+          ? await resizeImageFile(file, ZONE.MAX_UPLOAD_PX, 80)
+          : await resizeImageFile(file, ICON.MAX_UPLOAD_PX, 90);
+      setDraft({ imageUrl: img.url, previewUrl: img.preview, imageBytes: img.bytes });
       setMessage('');
     } catch (e) {
       setMessage((e as Error).message);

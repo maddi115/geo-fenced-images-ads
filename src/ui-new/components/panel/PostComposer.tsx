@@ -48,8 +48,9 @@ export const PostComposer: Component = () => {
       <Show when={draft.kind !== 'pixel'}>
         <label class="field-label">Image</label>
         <div class="image-row">
-          <Show when={draft.imageUrl}>
-            <img class="image-preview" src={draft.imageUrl!} alt="" />
+          <Show when={draft.previewUrl}>
+            <img class="image-preview" src={draft.previewUrl!} alt="" />
+            <span class="image-size">{Math.max(1, Math.round(draft.imageBytes / 1024))} KB · JPEG XL</span>
           </Show>
           <label class="btn btn-secondary file-btn">
             {draft.imageUrl ? 'Change image' : 'Upload image'}

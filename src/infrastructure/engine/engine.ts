@@ -13,6 +13,10 @@ import { ICON, MARKER, PIXEL, ZONE, ZOOM } from '../../config-new/constants';
 import type { GfxBackend } from './backends/backend';
 import { WebGPUBackend } from './backends/webgpu';
 import { WebGL2Backend } from './backends/webgl2';
+import { decodeToBitmap } from '../images/jxl';
+
+const FONT_FAMILY = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+const TEXT_PX = 14;
 
 const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
 const MAX_TILES_PER_WORKER = 3;
@@ -130,6 +134,9 @@ export class MapEngine {
     this.ex.engine_set_view(center[1], center[0], zoom);
     this.scratch = this.ex.engine_alloc(16);
     this.textBuf = this.ex.engine_alloc(512);
+
+    // labels are drawn with Inter: make sure the font is ready before the first label
+    await Promise.all([document.fonts.load(`500 ${TEXT_PX}px Inter`), document.fonts.load(`600 ${TEXT_PX}px Inter`)]).catch(() => {});
 
     this.bindInput();
     this.startWorkers();
@@ -472,29 +479,6 @@ export class MapEngine {
     this.ex.engine_set_hover_info(index, t.tex, t.w, t.h);
   }
 
-  // dark bubble with a pin: "📍 Figueroa St & Exposition Blvd"
-  private async makeInfoTex(text: string): Promise<Tex> {
-    const dpr = this.dpr;
-    const label = `📍 ${text}`;
-    const font = `600 ${12 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    const meas = document.createElement('canvas').getContext('2d')!;
-    meas.font = font;
-    const padX = 9 * dpr, h = Math.ceil(24 * dpr);
-    const w = Math.ceil(Math.min(320 * dpr, meas.measureText(label).width + padX * 2));
-    const cv = document.createElement('canvas');
-    cv.width = w;
-    cv.height = h;
-    const ctx = cv.getContext('2d')!;
-    ctx.fillStyle = 'rgba(17, 24, 39, 0.92)';
-    ctx.beginPath();
-    ctx.roundRect(0, 0, w, h, h / 2);
-    ctx.fill();
-    ctx.fillStyle = '#f9fafb';
-    ctx.font = font;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, padX, h / 2, w - padX * 2);
-    return this.uploadCanvas(cv);
-  }
 
   // ------------------------------------------------------------ textures
   private uploadCanvas(cv: HTMLCanvasElement | OffscreenCanvas): Tex {
@@ -518,8 +502,8 @@ export class MapEngine {
     return this.cached(`img:${url.length}:${url.slice(-64)}`, async () => {
       const img = await loadImage(url);
       const cv = document.createElement('canvas');
-      cv.width = img.naturalWidth;
-      cv.height = img.naturalHeight;
+      cv.width = img.width;
+      cv.height = img.height;
       cv.getContext('2d')!.drawImage(img, 0, 0);
       return this.uploadCanvas(cv);
     });
@@ -540,8 +524,8 @@ export class MapEngine {
       ctx.beginPath();
       ctx.roundRect(0, 0, total, total, 8 * dpr);
       ctx.fill();
-      const s = Math.max(size / img.naturalWidth, size / img.naturalHeight);
-      const w = img.naturalWidth * s, h = img.naturalHeight * s;
+      const s = Math.max(size / img.width, size / img.height);
+      const w = img.width * s, h = img.height * s;
       ctx.save();
       ctx.beginPath();
       ctx.roundRect(b, b, size, size, 6 * dpr);
@@ -552,37 +536,61 @@ export class MapEngine {
     });
   }
 
-  // comment text in a white bubble, drawn at device resolution so it stays sharp
+  // comment text on a white card with a soft shadow (Google Maps style), drawn at device
+  // resolution so it stays sharp
   private labelTex(text: string, draft: boolean) {
     const dpr = this.dpr;
     return this.cached(`label:${dpr}:${draft}:${text}`, async () => {
-      const font = `600 ${12 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      const pad = { x: 8 * dpr, y: 5 * dpr };
-      const maxW = 220 * dpr;
+      const font = `600 ${TEXT_PX * dpr}px ${FONT_FAMILY}`;
+      const pad = { x: 10 * dpr, y: 6 * dpr };
+      const maxW = 240 * dpr;
       const meas = document.createElement('canvas').getContext('2d')!;
       meas.font = font;
       const lines = wrap(meas, text, maxW - pad.x * 2);
-      const lineH = 16 * dpr;
-      const w = Math.ceil(Math.min(maxW, Math.max(...lines.map((l) => meas.measureText(l).width)) + pad.x * 2));
-      const h = Math.ceil(lines.length * lineH + pad.y * 2);
-      const cv = document.createElement('canvas');
-      cv.width = w;
-      cv.height = h;
-      const ctx = cv.getContext('2d')!;
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = '#e5e7eb';
-      ctx.lineWidth = dpr;
-      if (draft) ctx.setLineDash([4 * dpr, 3 * dpr]);
-      ctx.beginPath();
-      ctx.roundRect(dpr / 2, dpr / 2, w - dpr, h - dpr, 8 * dpr);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#111827';
+      const lineH = Math.round(TEXT_PX * 1.35 * dpr);
+      const cardW = Math.ceil(Math.min(maxW, Math.max(...lines.map((l) => meas.measureText(l).width)) + pad.x * 2));
+      const cardH = Math.ceil(lines.length * lineH + pad.y * 2);
+      const { cv, ctx, m } = shadowCanvas(cardW, cardH, dpr);
+      card(ctx, m, m, cardW, cardH, 8 * dpr, dpr, draft);
+      ctx.fillStyle = '#202124';
       ctx.font = font;
       ctx.textBaseline = 'middle';
-      lines.forEach((l, i) => ctx.fillText(l, pad.x, pad.y + lineH * (i + 0.5)));
+      lines.forEach((l, i) => ctx.fillText(l, m + pad.x, m + pad.y + lineH * (i + 0.5)));
       return this.uploadCanvas(cv);
     });
+  }
+
+  // cross streets: white card, red pin, Inter (like a Google Maps place chip)
+  private async makeInfoTex(text: string): Promise<Tex> {
+    const dpr = this.dpr;
+    const font = `600 ${TEXT_PX * dpr}px ${FONT_FAMILY}`;
+    const meas = document.createElement('canvas').getContext('2d')!;
+    meas.font = font;
+    const padX = 11 * dpr, pinW = 12 * dpr, gap = 7 * dpr;
+    const cardH = Math.ceil(30 * dpr);
+    const textMax = 320 * dpr;
+    const textW = Math.min(textMax, meas.measureText(text).width);
+    const cardW = Math.ceil(padX + pinW + gap + textW + padX);
+    const { cv, ctx, m } = shadowCanvas(cardW, cardH, dpr);
+    card(ctx, m, m, cardW, cardH, cardH / 2, dpr, false);
+    // pin
+    const px = m + padX + pinW / 2, py = m + cardH / 2 - 1 * dpr, r = 5 * dpr;
+    ctx.fillStyle = '#ea4335';
+    ctx.beginPath();
+    ctx.arc(px, py - r * 0.35, r, Math.PI, 0);
+    ctx.lineTo(px, py + r * 1.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px, py - r * 0.35, r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    // text
+    ctx.fillStyle = '#202124';
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, m + padX + pinW + gap, m + cardH / 2 + 0.5 * dpr, textMax);
+    return this.uploadCanvas(cv);
   }
 
   // ------------------------------------------------------------ imports for C++
@@ -641,19 +649,45 @@ function draftToPost(d: Draft): Post | null {
   return null;
 }
 
-const imageCache = new Map<string, Promise<HTMLImageElement>>();
+const imageCache = new Map<string, Promise<ImageBitmap>>();
 function loadImage(url: string) {
   let p = imageCache.get(url);
   if (!p) {
-    p = new Promise((res, rej) => {
-      const img = new Image();
-      img.onload = () => res(img);
-      img.onerror = rej;
-      img.src = url;
-    });
+    p = decodeToBitmap(url); // JPEG XL (native or WebAssembly), PNG, JPEG...
     imageCache.set(url, p);
   }
   return p;
+}
+
+// canvas with room around the card for its shadow
+function shadowCanvas(w: number, h: number, dpr: number) {
+  const m = Math.ceil(5 * dpr);
+  const cv = document.createElement('canvas');
+  cv.width = w + m * 2;
+  cv.height = h + m * 2;
+  return { cv, ctx: cv.getContext('2d')!, m };
+}
+
+function card(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, dpr: number, dashed: boolean) {
+  ctx.save();
+  ctx.shadowColor = 'rgba(60, 64, 67, 0.32)';
+  ctx.shadowBlur = 4 * dpr;
+  ctx.shadowOffsetY = 1 * dpr;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+  ctx.restore();
+  if (dashed) {
+    ctx.save();
+    ctx.strokeStyle = '#9aa0a6';
+    ctx.lineWidth = dpr;
+    ctx.setLineDash([4 * dpr, 3 * dpr]);
+    ctx.beginPath();
+    ctx.roundRect(x + dpr / 2, y + dpr / 2, w - dpr, h - dpr, r);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function wrap(ctx: CanvasRenderingContext2D, text: string, maxW: number) {

@@ -9,4 +9,11 @@ export default defineConfig({
   build: {
     target: 'esnext',
   },
+  // the JPEG XL codec loads its own .wasm files; don't let Vite pre-bundle it
+  optimizeDeps: {
+    exclude: ['@jsquash/jxl'],
+  },
+  worker: {
+    format: 'es',
+  },
 });

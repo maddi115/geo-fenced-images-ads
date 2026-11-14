@@ -512,6 +512,40 @@ bool segIntersect(const Seg& a, const Seg& b, double& ix, double& iy) {
   return true;
 }
 
+// "South Figueroa Street" -> "S Figueroa St", like Google Maps
+std::string abbreviate(const std::string& name) {
+  static const std::pair<const char*, const char*> SUFFIX[] = {
+    {"Street", "St"}, {"Avenue", "Ave"}, {"Boulevard", "Blvd"}, {"Drive", "Dr"}, {"Road", "Rd"},
+    {"Lane", "Ln"}, {"Place", "Pl"}, {"Court", "Ct"}, {"Parkway", "Pkwy"}, {"Highway", "Hwy"},
+    {"Freeway", "Fwy"}, {"Expressway", "Expy"}, {"Terrace", "Ter"}, {"Circle", "Cir"},
+    {"Square", "Sq"}, {"Trail", "Trl"}, {"Alley", "Aly"}, {"Plaza", "Plz"}, {"Mount", "Mt"},
+    {"Saint", "St"}, {"Crescent", "Cres"}, {"Point", "Pt"},
+  };
+  static const std::pair<const char*, const char*> DIR[] = {
+    {"North", "N"}, {"South", "S"}, {"East", "E"}, {"West", "W"},
+    {"Northeast", "NE"}, {"Northwest", "NW"}, {"Southeast", "SE"}, {"Southwest", "SW"},
+  };
+  std::vector<std::string> words;
+  size_t i = 0;
+  while (i < name.size()) {
+    size_t j = name.find(' ', i);
+    if (j == std::string::npos) j = name.size();
+    if (j > i) words.push_back(name.substr(i, j - i));
+    i = j + 1;
+  }
+  for (size_t k = 0; k < words.size(); k++) {
+    bool first = k == 0, last = k + 1 == words.size();
+    if (words.size() > 1 && (first || last)) {
+      for (auto& [full, ab] : DIR) if (words[k] == full) { words[k] = ab; break; }
+    }
+    // suffixes: not the very first word ("Avenue of the Stars" stays readable)
+    if (!first) for (auto& [full, ab] : SUFFIX) if (words[k] == full) { words[k] = ab; break; }
+  }
+  std::string out;
+  for (size_t k = 0; k < words.size(); k++) { if (k) out += ' '; out += words[k]; }
+  return out;
+}
+
 bool crossStreets(Merc p, std::string& out) {
   out.clear();
   int n = 1 << NAME_Z;
@@ -567,7 +601,8 @@ bool crossStreets(Merc p, std::string& out) {
       if (sg.name == a || *sg.name == *a) da = std::min(da, d);
       if (sg.name == b || *sg.name == *b) db = std::min(db, d);
     }
-    out = da <= db ? *a + " & " + *b : *b + " & " + *a;
+    std::string A = abbreviate(*a), B = abbreviate(*b);
+    out = da <= db ? A + " & " + B : B + " & " + A;
     return true;
   }
   // no intersection nearby: name the closest street
@@ -577,7 +612,7 @@ bool crossStreets(Merc p, std::string& out) {
     double d = distPointSeg(p.x, p.y, sg);
     if (d < nd) { nd = d; nearest = sg.name; }
   }
-  if (nearest) out = "on " + *nearest;
+  if (nearest) out = "on " + abbreviate(*nearest);
   return true;
 }
 
