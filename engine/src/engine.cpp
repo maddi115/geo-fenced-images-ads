@@ -1165,6 +1165,7 @@ bool hitMyLocation(float x, float y) {
 }
 
 EXPORT(engine_hit_my_location) int engine_hit_my_location(float x, float y) { return hitMyLocation(x, y) ? 1 : 0; }
+EXPORT(engine_is_dragging_location) int engine_is_dragging_location() { return draggingLoc ? 1 : 0; }
 
 EXPORT(engine_pointer_down) void engine_pointer_down(int id, float x, float y) {
   if (pointers.empty() && hitMyLocation(x, y)) {

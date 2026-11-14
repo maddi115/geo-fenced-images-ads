@@ -441,3 +441,114 @@
   .interface-layer { display: flex; flex-direction: column; gap: 10px; }
   .locate-wrap { order: -1; padding: 0 12px; }
 }
+
+/* ---------- one-line location row ---------- */
+.location-row.as-button {
+  width: 100%;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.location-row.as-button:hover { background: #f1f3f4; }
+.location-action {
+  flex: none;
+  color: #1a73e8;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ---------- choose-location mode ---------- */
+.pick-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1500;
+  pointer-events: none;
+}
+.pick-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.pick-pin {
+  position: absolute;
+  left: -17px;
+  top: -50px;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
+  transition: transform 0.15s ease;
+}
+.pick-pin.lifted { transform: translateY(-8px); }
+.pick-shadow {
+  position: absolute;
+  left: -5px;
+  top: -2px;
+  width: 10px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.3);
+}
+.pick-address {
+  position: absolute;
+  bottom: 62px;
+  left: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  max-width: 86vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #fff;
+  color: #202124;
+  font: 600 15px/1.2 'Inter', sans-serif;
+  padding: 9px 14px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(60, 64, 67, 0.3);
+  transition: opacity 0.15s;
+}
+.pick-address.is-moving { opacity: 0.85; }
+.pick-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+  background: #fff;
+  padding: 8px;
+  border-radius: 999px;
+  box-shadow: 0 2px 10px rgba(60, 64, 67, 0.3);
+}
+.pick-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 11px 16px;
+  font: 600 14px/1 'Inter', sans-serif;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pick-btn.ghost { background: #f1f3f4; color: #202124; }
+.pick-btn.primary { background: #1a73e8; color: #fff; }
+
+/* live address above the blue dot while dragging it */
+.drag-address {
+  position: absolute;
+  z-index: 1500;
+  transform: translate(-50%, calc(-100% - 22px));
+  pointer-events: none;
+  white-space: nowrap;
+  background: #fff;
+  color: #202124;
+  font: 600 14px/1.2 'Inter', sans-serif;
+  padding: 7px 12px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgba(60, 64, 67, 0.3);
+}
+
+@media (max-width: 640px) {
+  /* the map gets the whole screen while choosing a location */
+  .interface-layer.is-picking { display: none !important; }
+  .pick-bar { bottom: calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 24px); justify-content: space-between; }
+  .pick-btn.primary { flex: 1; }
+}

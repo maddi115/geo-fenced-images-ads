@@ -37,6 +37,8 @@ const [busy, setBusy] = createSignal(false);
 export type DrawMode = 'rect' | 'poly' | null;
 // cross streets of the draft's location: null = not placed, 'loading', or the text ('' = none found)
 const [draftAddress, setDraftAddress] = createSignal<string | null>(null);
+// choosing a location with the center pin (pixel + icon)
+const [picking, setPicking] = createSignal(false);
 const [drawMode, setDrawMode] = createSignal<DrawMode>(null);
 
 export const PRICE_BY_KIND: Record<PostKind, number> = {
@@ -58,6 +60,7 @@ export const postActions = {
     // keep the comment when switching, clear the rest
     const comment = draft.comment;
     setDrawMode(null);
+    setPicking(false);
     setDraft({ ...emptyDraft(kind), comment });
     setMessage('');
   },
@@ -87,7 +90,26 @@ export const postActions = {
     setMessage('Click the map to place it');
   },
 
-  // "Here" button: place at the user's current location
+  startPicking() {
+    if (draft.kind === 'zone') return;
+    setDrawMode(null);
+    setDraft('placing', false);
+    setPicking(true);
+    setMessage('');
+  },
+
+  cancelPicking() {
+    setPicking(false);
+  },
+
+  /** confirm the center-pin location */
+  setPicked(at: LatLng) {
+    setPicking(false);
+    setDraft({ at, placing: false });
+    setMessage('');
+  },
+
+  // place at a given point (e.g. the user's location)
   placeHere(at: LatLng) {
     if (draft.kind === 'zone') return;
     setDrawMode(null);
@@ -181,6 +203,7 @@ export const postActions = {
 
   cancelDraft() {
     setDrawMode(null);
+    setPicking(false);
     setDraft({ ...emptyDraft(draft.kind) });
     setMessage('');
   },
@@ -208,4 +231,4 @@ export const postActions = {
   },
 };
 
-export { posts, draft, hoveredZoneId, message, busy, drawMode, draftAddress };
+export { posts, draft, hoveredZoneId, message, busy, drawMode, draftAddress, picking };

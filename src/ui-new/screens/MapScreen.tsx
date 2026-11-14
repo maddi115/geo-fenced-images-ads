@@ -6,7 +6,8 @@ import {
 } from '../../infrastructure/geo/my-location';
 import { PostComposer } from '../components/panel/PostComposer';
 import { CheckoutModal } from '../components/panel/CheckoutModal';
-import { posts, draft, drawMode, postActions } from '../../use-cases/posts/posts-store';
+import { posts, draft, drawMode, picking, postActions } from '../../use-cases/posts/posts-store';
+import { PickLocation } from '../components/map/PickLocation';
 import { MAP_CONFIG } from '../../config-new/constants';
 import './interface.css';
 import '../components/map/posts.css';
@@ -25,19 +26,28 @@ export const MapScreen: Component = () => {
   let canvas!: HTMLCanvasElement;
   let engine: MapEngine | undefined;
   const [stats, setStats] = createSignal<EngineStats | null>(null);
+  const [eng, setEng] = createSignal<MapEngine | null>(null);
+  const [dragChip, setDragChip] = createSignal<{ x: number; y: number; text: string } | null>(null);
   const [showStats, setShowStats] = createSignal(!window.matchMedia('(max-width: 640px)').matches);
   let statsTimer = 0;
   let recenter: () => void = () => startLocation();
 
   onMount(async () => {
     const e: MapEngine = new MapEngine(canvas, {
-      onClick: (at) => postActions.placeAt(at),
-      onMyLocationMoved: () => setMyAt(e.getMyLocation()),
+      // while choosing a location, tapping the map moves the pin there
+      onClick: (at) => (picking() ? e.flyTo(at) : postActions.placeAt(at)),
+      onMyLocationMoved: () => { setMyAt(e.getMyLocation()); setDragChip(null); },
+      // live address above the blue dot while you drag it
+      onMyLocationDrag: (at, screen) => {
+        const a = e.addressNow(at);
+        setDragChip({ x: screen.x, y: screen.y, text: a === null ? 'Finding cross streets…' : a || 'No street names here' });
+      },
       onHoverZone: (id) => postActions.setHoveredZone(id),
     });
     engine = e;
     (window as any).__engine = e; // handy for debugging in the browser console
     await e.start(MAP_CONFIG.initialCenter, MAP_CONFIG.initialZoom);
+    setEng(e);
 
     // keep the C++ engine in sync with saved posts + the draft
     createEffect(() => {
@@ -104,7 +114,17 @@ export const MapScreen: Component = () => {
     <div>
       <canvas ref={canvas} style={{ position: 'absolute', inset: '0', width: '100%', height: '100%', display: 'block' }} />
 
-      <div class="interface-layer">
+      <Show when={picking() && eng()}>
+        <PickLocation engine={eng()!} />
+      </Show>
+
+      <Show when={dragChip()}>
+        {(c) => (
+          <div class="drag-address" style={{ left: `${c().x}px`, top: `${c().y}px` }}>{c().text}</div>
+        )}
+      </Show>
+
+      <div class={`interface-layer ${picking() ? 'is-picking' : ''}`}>
         <PostComposer />
       <div class="locate-wrap">
           <Show when={locStatusText(locStatus()) || locHint()}>

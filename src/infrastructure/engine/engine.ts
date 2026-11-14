@@ -57,6 +57,7 @@ type Exports = {
   engine_get_my_location: (out: number) => number;
   engine_reset_my_location_adjust: () => void;
   engine_hit_my_location: (x: number, y: number) => number;
+  engine_is_dragging_location: () => number;
   engine_wheel: (x: number, y: number, dy: number) => void;
   engine_dblclick: (x: number, y: number) => void;
   engine_frame: (w: number, h: number, dpr: number) => number;
@@ -83,6 +84,8 @@ export interface EngineEvents {
   onClick?: (at: LatLng) => void;
   /** the user finished dragging their blue dot */
   onMyLocationMoved?: () => void;
+  /** while dragging the blue dot: where it is (css px on screen) */
+  onMyLocationDrag?: (at: LatLng, screen: { x: number; y: number }) => void;
   onHoverZone?: (postId: string | null) => void;
 }
 
@@ -301,6 +304,18 @@ export class MapEngine {
     this.ex.engine_fly_to(at.lng, at.lat, zoom ?? this.zoom);
   }
 
+  /** Map center in lng/lat */
+  center(): LatLng {
+    return this.screenToLngLat(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2);
+  }
+
+  /** Cross streets right now: text, '' if none, or null if the street data is still loading */
+  addressNow(at: LatLng): string | null {
+    const n = this.ex.engine_cross_streets_at(at.lng, at.lat, this.textBuf, 512);
+    if (n < 0) return null;
+    return n ? new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n)) : '';
+  }
+
   /** Nearest cross streets for a point; waits (up to ~6 s) for the street data to load. */
   async addressAt(at: LatLng): Promise<string> {
     for (let i = 0; i < 30; i++) {
@@ -380,6 +395,10 @@ export class MapEngine {
     c.addEventListener('pointermove', (e) => {
       const p = pos(e);
       this.ex.engine_pointer_move(e.pointerId, p.x * this.dpr, p.y * this.dpr);
+      if (this.ex.engine_is_dragging_location()) {
+        const at = this.getMyLocation();
+        if (at) this.events.onMyLocationDrag?.(at, this.lngLatToScreen(at));
+      }
       // "grab" cursor over your blue dot (it can be dragged to fix your location)
       if (e.pointerType === 'mouse' && !this.drawKind && !this.placing) {
         c.style.cursor = this.ex.engine_hit_my_location(p.x * this.dpr, p.y * this.dpr) ? 'grab' : '';
@@ -445,7 +464,7 @@ export class MapEngine {
     });
   }
 
-  private lngLatToScreen(p: LatLng) {
+  lngLatToScreen(p: LatLng) {
     this.ex.engine_lnglat_to_screen(p.lng, p.lat, this.scratch);
     const f = new Float64Array(this.ex.memory.buffer, this.scratch, 2);
     return { x: f[0] / this.dpr, y: f[1] / this.dpr };

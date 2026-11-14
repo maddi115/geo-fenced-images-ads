@@ -1,11 +1,10 @@
 import { Component, For, Show, createSignal, createEffect, on } from 'solid-js';
 import {
-  draft, posts, message, busy, drawMode, draftAddress, postActions, PRICE_BY_KIND, missingForDraft,
+  draft, posts, message, busy, drawMode, draftAddress, picking, postActions, PRICE_BY_KIND, missingForDraft,
 } from '../../../use-cases/posts/posts-store';
 import type { PostKind } from '../../../use-cases/posts/post-schemas';
 import { formatPrice } from '../../../infrastructure/payments/checkout';
 import { COMMENT, ICON } from '../../../config-new/constants';
-import { myAt } from '../../../infrastructure/geo/my-location';
 
 const KINDS: { kind: PostKind; title: string; sub: string }[] = [
   { kind: 'pixel', title: 'Red pixel', sub: 'Free' },
@@ -29,7 +28,7 @@ export const PostComposer: Component = () => {
   const [collapsed, setCollapsed] = createSignal(isPhone());
   // phones: fold away while placing / drawing on the map, reopen when done
   let autoFolded = false;
-  createEffect(on(() => draft.placing || !!drawMode(), (busyOnMap) => {
+  createEffect(on(() => draft.placing || picking() || !!drawMode(), (busyOnMap) => {
     if (!isPhone()) return;
     if (busyOnMap && !collapsed()) { autoFolded = true; setCollapsed(true); }
     else if (!busyOnMap && autoFolded) { autoFolded = false; setCollapsed(false); }
@@ -45,7 +44,7 @@ export const PostComposer: Component = () => {
     <div class={`composer ${collapsed() ? 'collapsed' : ''}`}>
       <button class="composer-header" onClick={() => { autoFolded = false; setCollapsed(!collapsed()); }} aria-expanded={!collapsed()}>
         <span class="composer-title">
-          {draft.placing ? 'Tap the map to place it' : drawMode() ? 'Draw your zone on the map' : collapsed() ? 'Open menu' : 'Close menu'}
+          {picking() ? 'Move the map to set the pin' : drawMode() ? 'Draw your zone on the map' : collapsed() ? 'Open menu' : 'Close menu'}
         </span>
         <span class="chevron">{collapsed() ? '▴' : '▾'}</span>
       </button>
@@ -106,24 +105,17 @@ export const PostComposer: Component = () => {
           </label>
         </Show>
 
-        {/* location */}
-        <div class="location-row">
-          <Pin muted={!placed()} />
-          <div class="location-text">
-            <Show
-              when={placed()}
-              fallback={<span class="muted">{draft.kind === 'zone' ? 'Draw your zone on the map' : 'Not placed yet'}</span>}
-            >
-              <span>
-                {draftAddress() === 'loading'
-                  ? 'Finding cross streets…'
-                  : draftAddress() || 'Placed (no street names here)'}
-              </span>
-            </Show>
-          </div>
-          <Show
-            when={draft.kind !== 'zone'}
-            fallback={
+        {/* location: one line, one button */}
+        <Show
+          when={draft.kind !== 'zone'}
+          fallback={
+            <div class="location-row">
+              <Pin muted={!placed()} />
+              <div class="location-text">
+                <Show when={placed()} fallback={<span class="muted">Draw your zone</span>}>
+                  {draftAddress() === 'loading' ? 'Finding cross streets…' : draftAddress() || 'Zone drawn'}
+                </Show>
+              </div>
               <div class="draw-row">
                 <button
                   class={`chip ${drawMode() === 'rect' ? 'active-tool' : ''}`}
@@ -138,20 +130,19 @@ export const PostComposer: Component = () => {
                   ⬟ Shape
                 </button>
               </div>
-            }
-          >
-            <div class="draw-row">
-              <Show when={myAt()}>
-                <button class="chip" title="Place it where you are" onClick={() => postActions.placeHere(myAt()!)}>
-                  Here
-                </button>
-              </Show>
-              <button class={`chip ${draft.placing ? 'active-tool' : ''}`} disabled={draft.placing} onClick={() => postActions.startPlacing()}>
-                {draft.placing ? 'Tap map…' : placed() ? 'Move' : 'Place'}
-              </button>
             </div>
-          </Show>
-        </div>
+          }
+        >
+          <button class="location-row as-button" onClick={() => postActions.startPicking()}>
+            <Pin muted={!placed()} />
+            <span class="location-text">
+              <Show when={placed()} fallback={<span class="muted">Choose location</span>}>
+                {draftAddress() === 'loading' ? 'Finding cross streets…' : draftAddress() || 'Location set'}
+              </Show>
+            </span>
+            <span class="location-action">{placed() ? 'Change' : 'Set'}</span>
+          </button>
+        </Show>
 
         <button
           class="btn btn-primary"
