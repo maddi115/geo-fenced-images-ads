@@ -13,6 +13,11 @@ import '../components/map/posts.css';
 //   2. Paid  - custom uploaded icon (fixed 225px) + comment
 //   3. Paid  - custom zone upload (image fills a drawn area) + comment
 // The map itself is the C++ engine in engine/src (compiled to public/engine.wasm).
+const centerOf = (c: { lat: number; lng: number }[]) => {
+  const lats = c.map((p) => p.lat), lngs = c.map((p) => p.lng);
+  return { lat: (Math.max(...lats) + Math.min(...lats)) / 2, lng: (Math.max(...lngs) + Math.min(...lngs)) / 2 };
+};
+
 export const MapScreen: Component = () => {
   let canvas!: HTMLCanvasElement;
   let engine: MapEngine | undefined;
@@ -47,6 +52,16 @@ export const MapScreen: Component = () => {
     });
 
     createEffect(() => e.setPlacingCursor(draft.placing));
+
+    // Location row in the panel: cross streets where the draft was placed
+    let addrReq = 0;
+    createEffect(() => {
+      const at = draft.kind === 'zone' && draft.coordinates ? centerOf(draft.coordinates) : draft.kind !== 'zone' ? draft.at : null;
+      const req = ++addrReq;
+      if (!at) return postActions.setDraftAddress(null);
+      postActions.setDraftAddress('loading');
+      e.addressAt(at).then((text) => { if (req === addrReq) postActions.setDraftAddress(text); });
+    });
 
     statsTimer = window.setInterval(() => {
       const st = e.stats();

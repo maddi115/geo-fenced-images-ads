@@ -625,6 +625,11 @@ void drawSolidQuad(RGBA c, double x, double y, double w, double h) {
 }
 
 void drawLabel(const Post& p, double cxPx, double bottomPx) {
+  // the hovered / tapped post shows its full card (image + comment + address) instead
+  if (&p - posts.data() == hovered && hoverInfoTex) {
+    drawQuad(hoverInfoTex, std::round(cxPx - hoverInfoW / 2.0), std::round(bottomPx - hoverInfoH), hoverInfoW, hoverInfoH, 1.f);
+    return;
+  }
   if (!p.labelTex) return;
   double w = p.lw, h = p.lh; // label textures are made at device pixel size
   drawQuad(p.labelTex, std::round(cxPx - w / 2), std::round(bottomPx - h), w, h, p.alpha);
@@ -693,26 +698,6 @@ void drawPosts() {
         drawLabel(p, sx, sy);
       }
     }
-  }
-
-  if (hovered >= 0 && hovered < int(posts.size()) && hoverInfoTex) {
-    const Post& p = posts[hovered];
-    double sx, sy, below = 0;
-    double gap = cfg.labelGap * cam.dpr;
-    if (p.kind == P_PIXEL) {
-      mercToScreen(p.at, sx, sy);
-      below = sy + cfg.pixelSize * cam.dpr / 2 + gap;
-    } else if (p.kind == P_ICON) {
-      mercToScreen(p.at, sx, sy);
-      double s = iconSizePx();
-      double maxDim = std::max(p.tw, p.th);
-      double h = maxDim ? s * p.th / maxDim : s;
-      below = sy + h / 2 + gap;
-    } else {
-      mercToScreen(p.center, sx, sy);
-      below = sy + (p.thumbTex ? p.thh / 2.0 : 0) + gap;
-    }
-    drawQuad(hoverInfoTex, std::round(sx - hoverInfoW / 2.0), std::round(below), hoverInfoW, hoverInfoH, 1.f);
   }
 
   if (previewLine.id) {
@@ -884,6 +869,15 @@ EXPORT(engine_cross_streets) int engine_cross_streets(int index, char* buf, int 
   return n;
 }
 
+// Cross streets for any lng/lat (used by the panel's Location row). Same return values.
+EXPORT(engine_cross_streets_at) int engine_cross_streets_at(double lng, double lat, char* buf, int cap) {
+  std::string out;
+  if (!crossStreets(toMerc(lng, lat), out)) return -1;
+  int n = std::min(int(out.size()), cap);
+  std::memcpy(buf, out.data(), size_t(n));
+  return n;
+}
+
 // texture with the cross-street text for the currently hovered post
 EXPORT(engine_set_hover_info) void engine_set_hover_info(int index, int tex, int w, int h) {
   if (index != hovered) { if (tex) gfx_tex_delete(tex); return; }
@@ -1045,6 +1039,13 @@ EXPORT(engine_pointer_up) int engine_pointer_up(int id, float x, float y) {
   pointers.erase(std::remove_if(pointers.begin(), pointers.end(), [&](auto& p) { return p.id == id; }), pointers.end());
   if (pointers.size() < 2) pinchDist = 0;
   return click;
+}
+
+// tap / click on a post (phones have no hover): selects it like a hover.
+// Returns the post index, or -1 if nothing was tapped (then the selection is cleared).
+EXPORT(engine_tap) int engine_tap(float x, float y) {
+  updateHover(x, y);
+  return hovered;
 }
 
 EXPORT(engine_pointer_leave) void engine_pointer_leave() {

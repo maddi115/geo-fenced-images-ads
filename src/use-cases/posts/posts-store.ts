@@ -35,6 +35,8 @@ const [hoveredZoneId, setHoveredZoneId] = createSignal<string | null>(null);
 const [message, setMessage] = createSignal<string>('');
 const [busy, setBusy] = createSignal(false);
 export type DrawMode = 'rect' | 'poly' | null;
+// cross streets of the draft's location: null = not placed, 'loading', or the text ('' = none found)
+const [draftAddress, setDraftAddress] = createSignal<string | null>(null);
 const [drawMode, setDrawMode] = createSignal<DrawMode>(null);
 
 export const PRICE_BY_KIND: Record<PostKind, number> = {
@@ -189,9 +191,13 @@ export const postActions = {
     setMessage('All posts cleared');
   },
 
+  setDraftAddress(text: string | null) {
+    setDraftAddress(text);
+  },
+
   setHoveredZone(id: string | null) {
     setHoveredZoneId(id);
   },
 };
 
-export { posts, draft, hoveredZoneId, message, busy, drawMode };
+export { posts, draft, hoveredZoneId, message, busy, drawMode, draftAddress };

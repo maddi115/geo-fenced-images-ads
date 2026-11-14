@@ -50,6 +50,8 @@ type Exports = {
   engine_pointer_move: (id: number, x: number, y: number) => void;
   engine_pointer_up: (id: number, x: number, y: number) => number;
   engine_pointer_leave: () => void;
+  engine_tap: (x: number, y: number) => number;
+  engine_cross_streets_at: (lng: number, lat: number, buf: number, cap: number) => number;
   engine_wheel: (x: number, y: number, dy: number) => void;
   engine_dblclick: (x: number, y: number) => void;
   engine_frame: (w: number, h: number, dpr: number) => number;
@@ -97,6 +99,8 @@ export class MapEngine {
   private textBuf = 0;
   private texCache = new Map<string, Promise<Tex>>();
   private postIds: string[] = [];
+  private postInfo: { comment: string; imageUrl: string | null }[] = [];
+  private placing = false;
   private raf = 0;
   private dpr = 1;
   private scratch = 0;
@@ -242,6 +246,7 @@ export class MapEngine {
     const ex = this.ex;
     ex.engine_posts_clear();
     this.postIds = [];
+    this.postInfo = [];
     for (const { p, label, image, thumb } of prepared) {
       const a = p.draft ? 0.75 : 1;
       const L = label ?? { tex: 0, w: 0, h: 0 };
@@ -260,8 +265,21 @@ export class MapEngine {
         index = ex.engine_add_zone(ptr, n, image?.tex ?? 0, T.tex, T.w, T.h, L.tex, L.w, L.h, a, p.draft ? 1 : 0);
         ex.engine_free(ptr);
       }
-      if (index >= 0) this.postIds[index] = p.id;
+      if (index >= 0) {
+        this.postIds[index] = p.id;
+        this.postInfo[index] = { comment: p.comment.trim(), imageUrl: 'imageUrl' in p && p.imageUrl ? p.imageUrl : null };
+      }
     }
+  }
+
+  /** Nearest cross streets for a point; waits (up to ~6 s) for the street data to load. */
+  async addressAt(at: LatLng): Promise<string> {
+    for (let i = 0; i < 30; i++) {
+      const n = this.ex.engine_cross_streets_at(at.lng, at.lat, this.textBuf, 512);
+      if (n >= 0) return n ? new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n)) : '';
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return '';
   }
 
   // ------------------------------------------------------------ zone drawing tool
@@ -294,6 +312,7 @@ export class MapEngine {
   }
 
   setPlacingCursor(on: boolean) {
+    this.placing = on;
     if (!this.drawKind) this.canvas.style.cursor = on ? 'crosshair' : '';
   }
 
@@ -364,11 +383,14 @@ export class MapEngine {
         this.setPreview(this.drawPts, false);
         return;
       }
+      // tapping a post opens its card (phones have no hover); not while placing something
+      if (!this.placing && this.ex.engine_tap(p.x * this.dpr, p.y * this.dpr) >= 0) return;
       this.events.onClick?.(at);
     };
     c.addEventListener('pointerup', up);
     c.addEventListener('pointercancel', up);
-    c.addEventListener('pointerleave', () => this.ex.engine_pointer_leave());
+    // touch screens fire pointerleave after every tap, which would close the card right away
+    c.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') this.ex.engine_pointer_leave(); });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const p = pos(e);
@@ -477,18 +499,98 @@ export class MapEngine {
     }
   }
 
-  // ------------------------------------------------------------ cross streets on hover
+  // ------------------------------------------------------------ post card on hover / tap
+  // One card like a Google Maps place card: image, comment, and the nearest cross streets.
   private async showCrossStreets(index: number) {
     if (index !== this.hoverIndex) return;
+    const info = this.postInfo[index];
+    if (!info) return;
     const n = this.ex.engine_cross_streets(index, this.textBuf, 512);
-    if (n <= 0) return; // -1 = street data still loading (C++ calls on_hover again), 0 = none known
-    const text = new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n));
-    const t = await this.makeInfoTex(text);
-    // C++ owns the texture from here (it deletes it when the hover ends, or right away if
-    // the mouse already moved to another post)
+    // -1 = street data still loading: show the card now, C++ calls on_hover again when it arrives
+    const address = n > 0
+      ? new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n))
+      : n < 0 ? null : '';
+    const t = await this.makePostCard(info.comment, info.imageUrl, address);
+    if (index !== this.hoverIndex) { this.ex.engine_tex_delete(t.tex); return; }
+    // C++ owns the texture from here (deletes it when the card closes)
     this.ex.engine_set_hover_info(index, t.tex, t.w, t.h);
   }
 
+  private async makePostCard(comment: string, imageUrl: string | null, address: string | null): Promise<Tex> {
+    const dpr = this.dpr;
+    const W = 280 * dpr;                 // card width
+    const pad = 12 * dpr;
+    const img = imageUrl ? await loadImage(imageUrl).catch(() => null) : null;
+    const thumb = img ? 64 * dpr : 0;
+    const textX = pad + (thumb ? thumb + 12 * dpr : 0);
+    const textW = W - textX - pad;
+
+    const titleFont = `600 ${15 * dpr}px ${FONT_FAMILY}`;
+    const addrFont = `500 ${13 * dpr}px ${FONT_FAMILY}`;
+    const meas = document.createElement('canvas').getContext('2d')!;
+    meas.font = titleFont;
+    const title = comment || 'Pinned spot';
+    const lines = wrap(meas, title, textW).slice(0, 3);
+    const titleLH = Math.round(20 * dpr);
+    const addrLH = Math.round(18 * dpr);
+    const textH = lines.length * titleLH + 6 * dpr + addrLH;
+    const bodyH = Math.max(thumb, textH) + pad * 2;
+    const arrow = 8 * dpr;
+
+    const { cv, ctx, m } = shadowCanvas(W, bodyH + arrow, dpr);
+    // card with a small pointer at the bottom
+    ctx.save();
+    ctx.shadowColor = 'rgba(60, 64, 67, 0.3)';
+    ctx.shadowBlur = 6 * dpr;
+    ctx.shadowOffsetY = 2 * dpr;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.roundRect(m, m, W, bodyH, 12 * dpr);
+    ctx.moveTo(m + W / 2 - arrow, m + bodyH - 1);
+    ctx.lineTo(m + W / 2, m + bodyH + arrow);
+    ctx.lineTo(m + W / 2 + arrow, m + bodyH - 1);
+    ctx.fill();
+    ctx.restore();
+
+    if (img && thumb) {
+      const ty = m + (bodyH - thumb) / 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(m + pad, ty, thumb, thumb, 8 * dpr);
+      ctx.clip();
+      const sc = Math.max(thumb / img.width, thumb / img.height);
+      ctx.fillStyle = '#f1f3f4';
+      ctx.fillRect(m + pad, ty, thumb, thumb);
+      ctx.drawImage(img, m + pad + (thumb - img.width * sc) / 2, ty + (thumb - img.height * sc) / 2, img.width * sc, img.height * sc);
+      ctx.restore();
+    }
+
+    let y = m + (bodyH - textH) / 2;
+    ctx.fillStyle = '#202124';
+    ctx.font = titleFont;
+    ctx.textBaseline = 'middle';
+    lines.forEach((l, i) => ctx.fillText(l, m + textX, y + titleLH * (i + 0.5), textW));
+    y += lines.length * titleLH + 6 * dpr;
+
+    // address row: red pin + cross streets
+    const px = m + textX + 5 * dpr, py = y + addrLH / 2 - 1 * dpr, r = 4.5 * dpr;
+    ctx.fillStyle = address === '' ? '#9aa0a6' : '#ea4335';
+    ctx.beginPath();
+    ctx.arc(px, py - r * 0.35, r, Math.PI, 0);
+    ctx.lineTo(px, py + r * 1.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(px, py - r * 0.35, r * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = addrFont;
+    ctx.fillStyle = '#5f6368';
+    const addrText = address === null ? 'Finding cross streets…' : address || 'No street names here';
+    ctx.fillText(addrText, m + textX + 16 * dpr, y + addrLH / 2, textW - 16 * dpr);
+
+    return this.uploadCanvas(cv);
+  }
 
   // ------------------------------------------------------------ textures
   private uploadCanvas(cv: HTMLCanvasElement | OffscreenCanvas): Tex {
@@ -570,38 +672,6 @@ export class MapEngine {
     });
   }
 
-  // cross streets: white card, red pin, Inter (like a Google Maps place chip)
-  private async makeInfoTex(text: string): Promise<Tex> {
-    const dpr = this.dpr;
-    const font = `600 ${TEXT_PX * dpr}px ${FONT_FAMILY}`;
-    const meas = document.createElement('canvas').getContext('2d')!;
-    meas.font = font;
-    const padX = 11 * dpr, pinW = 12 * dpr, gap = 7 * dpr;
-    const cardH = Math.ceil(30 * dpr);
-    const textMax = 320 * dpr;
-    const textW = Math.min(textMax, meas.measureText(text).width);
-    const cardW = Math.ceil(padX + pinW + gap + textW + padX);
-    const { cv, ctx, m } = shadowCanvas(cardW, cardH, dpr);
-    card(ctx, m, m, cardW, cardH, cardH / 2, dpr, false);
-    // pin
-    const px = m + padX + pinW / 2, py = m + cardH / 2 - 1 * dpr, r = 5 * dpr;
-    ctx.fillStyle = '#ea4335';
-    ctx.beginPath();
-    ctx.arc(px, py - r * 0.35, r, Math.PI, 0);
-    ctx.lineTo(px, py + r * 1.4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(px, py - r * 0.35, r * 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    // text
-    ctx.fillStyle = '#202124';
-    ctx.font = font;
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, m + padX + pinW + gap, m + cardH / 2 + 0.5 * dpr, textMax);
-    return this.uploadCanvas(cv);
-  }
 
   // ------------------------------------------------------------ imports for C++
   private str(ptr: number, len: number) {
