@@ -1,153 +1,97 @@
-import { Component, onMount, createMemo, createSignal } from 'solid-js';
-import { zoneActions, zoneState, currentImage, currentZoom } from '../../use-cases/custom-zones/zone-store';
-import { LeafletAdapter } from '../../infrastructure/adapters/map-adapter';
-import { ZoneCanvas } from '../components/map/ZoneCanvas';
-import { MarkerController } from '../components/map/MarkerController';
-import { ZOOM } from '../../config-new/constants';
-import { calculateViewMode, getVisibilityActions } from '../../domain/visibility/visibility-rules';
+import { Component, onMount, onCleanup, createEffect, getOwner, runWithOwner } from 'solid-js';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { GpuPosts } from '../components/map/gpu-posts';
+import { ZoneDrawer } from '../../infrastructure/adapters/maplibre-draw';
+import { PostComposer } from '../components/panel/PostComposer';
+import { CheckoutModal } from '../components/panel/CheckoutModal';
+import { posts, draft, drawMode, hoveredZoneId, postActions } from '../../use-cases/posts/posts-store';
+import { MAP_CONFIG } from '../../config-new/constants';
+import './interface.css';
+import '../components/map/posts.css';
 
+// Map style. Swap the URL to change the look.
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
+
+// 3 ways to post:
+//   1. Free  - red pixel + comment
+//   2. Paid  - custom uploaded icon (fixed 225px) + comment
+//   3. Paid  - custom zone upload (image fills a drawn area) + comment
+// Everything on the map is drawn by MapLibre on the GPU (no Leaflet, no DOM markers).
 export const MapScreen: Component = () => {
-  const mapAdapter = new LeafletAdapter();
-  
-  const [markerElement, setMarkerElement] = createSignal<HTMLElement | null>(null);
-  const [bubbleElement, setBubbleElement] = createSignal<HTMLElement | null>(null);
+  let container!: HTMLDivElement;
+  let map: maplibregl.Map | undefined;
 
   onMount(() => {
-    mapAdapter.initialize('map-container');
-    zoneActions.setZoom(mapAdapter.getZoom());
-
-    mapAdapter.onDrawStart(() => {
-      zoneActions.startDrawing();
+    const owner = getOwner();
+    map = new maplibregl.Map({
+      container,
+      style: STYLE_URL,
+      center: [MAP_CONFIG.initialCenter[1], MAP_CONFIG.initialCenter[0]],
+      zoom: MAP_CONFIG.initialZoom,
+      minZoom: 2,
+      maxZoom: MAP_CONFIG.maxZoom,
+      attributionControl: { compact: true },
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
     });
+    (window as any).__map = map; // handy for debugging in the browser console
+    const m = map;
 
-    mapAdapter.onDrawComplete((coords) => {
-      const zone = {
-        id: crypto.randomUUID(),
-        coordinates: coords,
-        style: {
-          fillColor: '#0066ff',
-          fillOpacity: 0.09,
-          borderColor: '#0066ff',
-          borderWidth: 2,
-        },
-        createdAt: new Date(),
-      };
-      zoneActions.completeDrawing(zone);
-    });
+    m.once('load', () => runWithOwner(owner, () => {
+      const gpu = new GpuPosts(m, (id) => postActions.setHoveredZone(id));
+      gpu.install();
 
-    mapAdapter.onDrawCancel(() => {
-      zoneActions.cancelDrawing();
-    });
+      const drawer = new ZoneDrawer(
+        m,
+        (coords) => postActions.setZone(coords),
+        () => postActions.stopDraw()
+      );
+      drawer.install();
 
-    mapAdapter.onZoomChange((zoom) => {
-      zoneActions.setZoom(zoom);
-      zoneActions.setHovered(false);
-    });
+      // Pixel + icon: placed with a map click
+      m.on('click', (e) => {
+        if (drawer.active) return;
+        postActions.placeAt({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+      });
 
-    // Hover listeners
-    mapAdapter.onHover(() => {
-      if (currentZoom() < ZOOM.AD_INFO_THRESHOLD) {
-        zoneActions.setHovered(true);
-        console.log('✨ Hovered - showing ad info');
-      }
-    });
+      // keep the GPU layers in sync with saved posts + the draft
+      createEffect(() => {
+        posts.forEach((p) => p.id);
+        draft.kind;
+        draft.at;
+        draft.coordinates;
+        draft.imageUrl;
+        draft.comment;
+        gpu.update(posts, draft);
+      });
 
-    mapAdapter.onUnhover((relatedTarget) => {
-      if (currentZoom() < ZOOM.AD_INFO_THRESHOLD) {
-        // Persistence check (Source of Truth)
-        if (isMovingToMarkerOrBubble(relatedTarget)) {
-          console.log('⏸️ Maintaining hover - on marker/bubble');
-          return;
-        }
-        zoneActions.setHovered(false);
-        console.log('🔄 Unhovered - back to image');
-      }
-    });
+      createEffect(() => gpu.setHovered(hoveredZoneId()));
+
+      createEffect(() => {
+        const mode = drawMode();
+        if (mode) drawer.start(mode);
+        else if (drawer.active) drawer.stop(false);
+      });
+
+      createEffect(() => {
+        m.getCanvasContainer().classList.toggle('placing', draft.placing);
+      });
+    }));
   });
 
-  function isMovingToMarkerOrBubble(relatedTarget: any): boolean {
-    if (!relatedTarget) return false;
-
-    const marker = markerElement();
-    const bubble = bubbleElement();
-
-    if (marker && (relatedTarget === marker || marker.contains(relatedTarget))) {
-      return true;
-    }
-
-    if (bubble && (relatedTarget === bubble || bubble.contains(relatedTarget))) {
-      return true;
-    }
-
-    return false;
-  }
-
-  const viewLabel = createMemo(() => {
-    const mode = calculateViewMode({
-      zoom: currentZoom(),
-      zoomThreshold: ZOOM.AD_INFO_THRESHOLD,
-      hasImage: !!currentImage(),
-      isHovered: zoneState.hovered,
-    });
-    return getVisibilityActions(mode).label;
-  });
+  onCleanup(() => map?.remove());
 
   return (
     <div>
-      <div id="map-container" style={{ width: '100vw', height: '100vh' }} />
+      <div ref={container} style={{ position: 'absolute', inset: '0' }} />
 
-      <ZoneCanvas mapAdapter={mapAdapter} />
-
-      <MarkerController 
-        mapAdapter={mapAdapter} 
-        onMarkerElementChange={setMarkerElement}
-        onBubbleElementChange={setBubbleElement}
-      />
-
-      <div
-        class="interface-layer"
-        style={{
-          position: 'absolute',
-          top: '20px',
-          right: '20px',
-          'z-index': '1000',
-          display: 'flex',
-          'flex-direction': 'column',
-          gap: '10px',
-        }}
-      >
-        <div id="zoomLabel" style={{
-          background: 'white',
-          padding: '8px 16px',
-          'border-radius': '4px',
-          'font-family': 'monospace',
-          'font-weight': 'bold',
-        }}>
-          {viewLabel()}
-        </div>
-
-        <input
-          type="file"
-          id="upload"
-          accept="image/*"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-
-            const reader = new FileReader();
-            reader.onload = (ev) => {
-              const img = new Image();
-              img.onload = () => {
-                zoneActions.setImage(img);
-              };
-              img.src = ev.target?.result as string;
-            };
-            reader.readAsDataURL(file);
-          }}
-        />
-
-        <button onClick={() => window.location.reload()}>Reset</button>
+      <div class="interface-layer">
+        <PostComposer />
       </div>
+
+      <CheckoutModal />
     </div>
   );
 };
