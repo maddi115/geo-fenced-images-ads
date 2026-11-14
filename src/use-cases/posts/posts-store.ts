@@ -87,6 +87,14 @@ export const postActions = {
     setMessage('Click the map to place it');
   },
 
+  // "Here" button: place at the user's current location
+  placeHere(at: LatLng) {
+    if (draft.kind === 'zone') return;
+    setDrawMode(null);
+    setDraft({ at, placing: false });
+    setMessage('');
+  },
+
   // called by the map on click
   placeAt(at: LatLng) {
     if (!draft.placing || draft.kind === 'zone') return;

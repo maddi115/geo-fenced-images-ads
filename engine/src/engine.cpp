@@ -352,6 +352,8 @@ void evictTiles(double now) {
 // ---------------------------------------------------------------- camera + input
 struct Camera {
   double cx = 0.5, cy = 0.5, zoom = 13;
+  bool flying = false;
+  double flyX = 0, flyY = 0, flyZ = 0;
   double targetZoom = 13;
   double anchorX = 0, anchorY = 0; // screen point kept fixed while zooming
   int w = 1, h = 1;
@@ -654,6 +656,47 @@ Xform localXform(Merc origin) {
   return {float((origin.x - cam.cx) * wp + cam.w / 2.0), float((origin.y - cam.cy) * wp + cam.h / 2.0), float(wp / LOCAL)};
 }
 
+// ---------------------------------------------------------------- my location (blue dot)
+bool hasMyLoc = false;
+Merc myLoc{};
+double myAccuracyM = 0;
+Mesh unitCircle; // radius-1 circle, drawn at any size via the scale
+
+void ensureUnitCircle() {
+  if (unitCircle.id) return;
+  std::vector<float> v{0, 0};
+  std::vector<uint32_t> idx;
+  const int N = 48;
+  for (int i = 0; i <= N; i++) {
+    double a = 2 * PI * i / N;
+    v.push_back(float(std::cos(a)));
+    v.push_back(float(std::sin(a)));
+    if (i > 0) { idx.push_back(0); idx.push_back(uint32_t(i)); idx.push_back(uint32_t(i + 1)); }
+  }
+  unitCircle = upload(v, 2, &idx);
+}
+
+void drawCircle(double sx, double sy, double r, RGBA c) {
+  gfx_solid(unitCircle.id, float(sx), float(sy), float(r), c.r, c.g, c.b, c.a);
+}
+
+void drawMyLocation() {
+  if (!hasMyLoc) return;
+  ensureUnitCircle();
+  double sx, sy;
+  mercToScreen(myLoc, sx, sy);
+  double lng, lat;
+  fromMerc(myLoc, lng, lat);
+  // accuracy circle: meters -> device pixels at this latitude and zoom
+  double metersPerWorld = 40075016.686 * std::cos(lat * PI / 180.0);
+  double accPx = myAccuracyM / metersPerWorld * cam.worldPx();
+  double dotR = 8 * cam.dpr;
+  if (accPx > dotR * 1.5) drawCircle(sx, sy, accPx, hex(0x4285f4, 0.15f));
+  drawCircle(sx, sy, dotR + 4 * cam.dpr, hex(0x000000, 0.12f)); // soft edge
+  drawCircle(sx, sy, dotR + 2.5 * cam.dpr, hex(0xffffff));       // white ring
+  drawCircle(sx, sy, dotR, hex(0x4285f4));                       // Google blue
+}
+
 bool overCard(float sx, float sy) {
   return focusActive() && focus > 0.5 && sx >= cardX && sx <= cardX + cardW && sy >= cardY && sy <= cardY + cardH;
 }
@@ -682,6 +725,8 @@ void drawPosts() {
     gfx_line(p.outline.id, x.ox, x.oy, x.scale, cfg.zoneBorderWidth * cam.dpr,
              cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, (p.draft ? 0.6f : 1.f) * (isFocus ? 1.f : others));
   }
+
+  drawMyLocation();
 
   double fx = 0, fy = 0, fLabelBottom = 0; // focused post: screen point + where its label would sit
   bool haveFocus = false;
@@ -862,6 +907,23 @@ EXPORT(engine_set_view) void engine_set_view(double lng, double lat, double zoom
 
 EXPORT(engine_get_zoom) double engine_get_zoom() { return cam.zoom; }
 
+// blue "you are here" dot. accuracy in meters; pass accuracy < 0 to hide the dot
+EXPORT(engine_set_my_location) void engine_set_my_location(double lng, double lat, double accuracyM) {
+  hasMyLoc = accuracyM >= 0;
+  myLoc = toMerc(lng, lat);
+  myAccuracyM = std::max(0.0, accuracyM);
+  dirty = true;
+}
+
+// smoothly move the camera to a point
+EXPORT(engine_fly_to) void engine_fly_to(double lng, double lat, double zoom) {
+  Merc m = toMerc(lng, lat);
+  cam.flyX = m.x; cam.flyY = m.y;
+  cam.flyZ = std::max(MIN_ZOOM, std::min(MAX_ZOOM, zoom));
+  cam.flying = true;
+  dirty = true;
+}
+
 EXPORT(engine_screen_to_lnglat) void engine_screen_to_lnglat(float sx, float sy, double* out) {
   fromMerc(screenToMerc(sx, sy), out[0], out[1]);
 }
@@ -1038,6 +1100,7 @@ EXPORT(engine_pointer_down) void engine_pointer_down(int id, float x, float y) {
   pointers.erase(std::remove_if(pointers.begin(), pointers.end(), [&](auto& p) { return p.id == id; }), pointers.end());
   pointers.push_back({id, x, y, x, y});
   cam.targetZoom = cam.zoom; // stop any zoom animation
+  cam.flying = false;
   if (pointers.size() == 2) {
     pinchDist = std::hypot(pointers[0].x - pointers[1].x, pointers[0].y - pointers[1].y);
     pinchZoom = cam.zoom;
@@ -1095,6 +1158,7 @@ EXPORT(engine_pointer_leave) void engine_pointer_leave() {
 
 // smooth zoom toward the cursor
 EXPORT(engine_wheel) void engine_wheel(float x, float y, float deltaY) {
+  cam.flying = false;
   double step = -deltaY / 300.0;
   step = std::max(-1.0, std::min(1.0, step));
   cam.targetZoom = std::max(MIN_ZOOM, std::min(MAX_ZOOM, cam.targetZoom + step));
@@ -1119,8 +1183,21 @@ EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
     if (std::fabs(focusTarget - focus) < 0.01) focus = focusTarget;
     dirty = true;
   }
-  bool animating = std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
-  if (animating) {
+  if (cam.flying) {
+    // smooth fly: ease the center and zoom toward the target together
+    cam.cx += (cam.flyX - cam.cx) * 0.15;
+    cam.cy += (cam.flyY - cam.cy) * 0.15;
+    cam.zoom += (cam.flyZ - cam.zoom) * 0.15;
+    cam.targetZoom = cam.zoom;
+    double wp = cam.worldPx();
+    if (std::hypot(cam.flyX - cam.cx, cam.flyY - cam.cy) * wp < 0.5 && std::fabs(cam.flyZ - cam.zoom) < 0.005) {
+      cam.cx = cam.flyX; cam.cy = cam.flyY; cam.zoom = cam.targetZoom = cam.flyZ;
+      cam.flying = false;
+    }
+    dirty = true;
+  }
+  bool animating = cam.flying || std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
+  if (animating && !cam.flying) {
     double z = cam.zoom + (cam.targetZoom - cam.zoom) * 0.25;
     if (std::fabs(cam.targetZoom - z) < 0.001) z = cam.targetZoom;
     zoomAround(z, cam.anchorX, cam.anchorY);

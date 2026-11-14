@@ -5,6 +5,7 @@ import {
 import type { PostKind } from '../../../use-cases/posts/post-schemas';
 import { formatPrice } from '../../../infrastructure/payments/checkout';
 import { COMMENT, ICON } from '../../../config-new/constants';
+import { myLocation } from '../../../infrastructure/geo/my-location';
 
 const KINDS: { kind: PostKind; title: string; sub: string }[] = [
   { kind: 'pixel', title: 'Red pixel', sub: 'Free' },
@@ -127,9 +128,16 @@ export const PostComposer: Component = () => {
               </div>
             }
           >
-            <button class={`chip ${draft.placing ? 'active-tool' : ''}`} disabled={draft.placing} onClick={() => postActions.startPlacing()}>
-              {draft.placing ? 'Tap map…' : placed() ? 'Move' : 'Place'}
-            </button>
+            <div class="draw-row">
+              <Show when={myLocation()}>
+                <button class="chip" title="Place it where you are" onClick={() => postActions.placeHere(myLocation()!.at)}>
+                  Here
+                </button>
+              </Show>
+              <button class={`chip ${draft.placing ? 'active-tool' : ''}`} disabled={draft.placing} onClick={() => postActions.startPlacing()}>
+                {draft.placing ? 'Tap map…' : placed() ? 'Move' : 'Place'}
+              </button>
+            </div>
           </Show>
         </div>
 

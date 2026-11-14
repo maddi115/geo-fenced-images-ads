@@ -24,6 +24,8 @@ export default defineConfig({
   plugins: [solidPlugin(), engineStatsToTerminal()],
   server: {
     port: 3000,
+    // allow opening the dev server through a Cloudflare tunnel (https link for your phone)
+    allowedHosts: ['.trycloudflare.com'],
   },
   build: {
     target: 'esnext',

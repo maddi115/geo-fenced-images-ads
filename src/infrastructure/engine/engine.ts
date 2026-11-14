@@ -52,6 +52,8 @@ type Exports = {
   engine_pointer_leave: () => void;
   engine_tap: (x: number, y: number) => number;
   engine_cross_streets_at: (lng: number, lat: number, buf: number, cap: number) => number;
+  engine_set_my_location: (lng: number, lat: number, accuracyM: number) => void;
+  engine_fly_to: (lng: number, lat: number, zoom: number) => void;
   engine_wheel: (x: number, y: number, dy: number) => void;
   engine_dblclick: (x: number, y: number) => void;
   engine_frame: (w: number, h: number, dpr: number) => number;
@@ -270,6 +272,17 @@ export class MapEngine {
         this.postInfo[index] = { comment: p.comment.trim(), imageUrl: 'imageUrl' in p && p.imageUrl ? p.imageUrl : null };
       }
     }
+  }
+
+  /** Blue "you are here" dot (null hides it) */
+  setMyLocation(at: LatLng | null, accuracyM = 0) {
+    if (at) this.ex.engine_set_my_location(at.lng, at.lat, accuracyM);
+    else this.ex.engine_set_my_location(0, 0, -1);
+  }
+
+  /** Smoothly move the map to a point (zoom optional = keep current zoom) */
+  flyTo(at: LatLng, zoom?: number) {
+    this.ex.engine_fly_to(at.lng, at.lat, zoom ?? this.zoom);
   }
 
   /** Nearest cross streets for a point; waits (up to ~6 s) for the street data to load. */
