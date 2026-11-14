@@ -1,6 +1,8 @@
 // A GPU backend executes the drawing commands the C++ engine sends (engine/src/gfx.hpp).
 export interface GfxBackend {
   readonly name: 'WebGPU' | 'WebGL2';
+  /** graphics card description, for the stats */
+  readonly gpu: string;
   /** functions imported by the C++ engine under the "gfx" module */
   imports(memory: () => ArrayBuffer): Record<string, (...args: number[]) => number | void>;
 }

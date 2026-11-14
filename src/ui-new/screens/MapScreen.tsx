@@ -1,5 +1,6 @@
 import { Component, onMount, onCleanup, createEffect, createSignal, Show } from 'solid-js';
 import { MapEngine, type EngineStats } from '../../infrastructure/engine/engine';
+import { reportStats } from '../../infrastructure/engine/stats-reporter';
 import { PostComposer } from '../components/panel/PostComposer';
 import { CheckoutModal } from '../components/panel/CheckoutModal';
 import { posts, draft, drawMode, postActions } from '../../use-cases/posts/posts-store';
@@ -47,7 +48,11 @@ export const MapScreen: Component = () => {
 
     createEffect(() => e.setPlacingCursor(draft.placing));
 
-    statsTimer = window.setInterval(() => setStats({ ...e.stats() }), 500);
+    statsTimer = window.setInterval(() => {
+      const st = e.stats();
+      setStats({ ...st });
+      reportStats(st); // dev only: prints to the npm run dev terminal
+    }, 500);
   });
 
   onCleanup(() => {

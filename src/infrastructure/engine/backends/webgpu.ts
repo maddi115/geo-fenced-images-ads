@@ -63,6 +63,7 @@ type Cmd =
 
 export class WebGPUBackend implements GfxBackend {
   readonly name = 'WebGPU' as const;
+  gpu = 'unknown GPU';
   private meshes: (GPUMesh | null)[] = [null];
   private textures: (GPUTex | null)[] = [null];
   private cmds: Cmd[] = [];
@@ -103,12 +104,19 @@ export class WebGPUBackend implements GfxBackend {
           location.replace(url);
         }
       });
-      if (offscreen) return new WebGPUBackend(device, null, 'rgba8unorm');
-      const ctx = canvas.getContext('webgpu');
-      if (!ctx) return null;
-      const format = navigator.gpu.getPreferredCanvasFormat();
-      ctx.configure({ device, format, alphaMode: 'opaque' });
-      return new WebGPUBackend(device, ctx, format);
+      const info = (adapter as any).info as GPUAdapterInfo | undefined;
+      const gpu = info ? [info.vendor, info.architecture, info.description].filter(Boolean).join(' ') || 'unknown GPU' : 'unknown GPU';
+      let backend: WebGPUBackend;
+      if (offscreen) backend = new WebGPUBackend(device, null, 'rgba8unorm');
+      else {
+        const ctx = canvas.getContext('webgpu');
+        if (!ctx) return null;
+        const format = navigator.gpu.getPreferredCanvasFormat();
+        ctx.configure({ device, format, alphaMode: 'opaque' });
+        backend = new WebGPUBackend(device, ctx, format);
+      }
+      backend.gpu = gpu;
+      return backend;
     } catch (e) {
       console.warn('WebGPU unavailable, falling back to WebGL2', e);
       return null;

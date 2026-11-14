@@ -56,6 +56,7 @@ interface GLMesh { vao: WebGLVertexArrayObject; buffers: WebGLBuffer[]; count: n
 
 export class WebGL2Backend implements GfxBackend {
   readonly name = 'WebGL2' as const;
+  readonly gpu: string;
   private gl: WebGL2RenderingContext;
   private solid: Prog;
   private line: Prog;
@@ -74,6 +75,8 @@ export class WebGL2Backend implements GfxBackend {
 
   private constructor(gl: WebGL2RenderingContext) {
     this.gl = gl;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    this.gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER));
     this.solid = this.program(VS_SOLID, FS_SOLID);
     this.line = this.program(VS_LINE, FS_SOLID);
     this.texP = this.program(VS_TEX, FS_TEX);

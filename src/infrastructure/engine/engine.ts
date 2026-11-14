@@ -60,6 +60,9 @@ interface Tex { tex: number; w: number; h: number }
 
 export interface EngineStats {
   backend: string;
+  gpu: string;
+  screen: string;       // canvas size in device pixels @ pixel ratio
+  maxFrameMs: number;   // slowest frame in the last half second
   workers: number;
   moving: boolean;      // false = nothing changed, so nothing was redrawn (saves battery)
   fps: number;          // frames drawn per second while moving
@@ -88,7 +91,8 @@ export class MapEngine {
   private buildMsSum = 0;
   private builds = 0;
   private statWindowStart = performance.now();
-  private lastStats: EngineStats = { backend: '', workers: 0, moving: false, fps: 0, frameMs: 0, budgetPct: 0, tileBuildMs: 0, tiles: 0 };
+  private lastStats: EngineStats = { backend: '', gpu: '', screen: '', maxFrameMs: 0, workers: 0, moving: false, fps: 0, frameMs: 0, budgetPct: 0, tileBuildMs: 0, tiles: 0 };
+  private drawMsMax = 0;
   private hoverIndex = -1;
   private textBuf = 0;
   private texCache = new Map<string, Promise<Tex>>();
@@ -164,6 +168,9 @@ export class MapEngine {
       const frameMs = this.drawn ? this.drawMsSum / this.drawn : this.lastStats.frameMs;
       this.lastStats = {
         backend: this.backend?.name ?? '',
+        gpu: this.backend?.gpu ?? '',
+        screen: `${this.canvas.width}x${this.canvas.height}@${this.dpr}`,
+        maxFrameMs: this.drawMsMax,
         workers: this.workers.length,
         moving,
         fps: moving ? this.drawn / secs : this.lastStats.fps,
@@ -174,6 +181,7 @@ export class MapEngine {
       };
       this.drawn = 0;
       this.drawMsSum = 0;
+      this.drawMsMax = 0;
       this.statWindowStart = now;
     }
     return this.lastStats;
@@ -194,8 +202,10 @@ export class MapEngine {
     const t0 = performance.now();
     const r = this.ex.engine_frame(w, h, dpr);
     if (r & 1) {
+      const ms = performance.now() - t0;
       this.drawn++;
-      this.drawMsSum += performance.now() - t0;
+      this.drawMsSum += ms;
+      if (ms > this.drawMsMax) this.drawMsMax = ms;
     }
     this.raf = requestAnimationFrame(this.loop);
   };

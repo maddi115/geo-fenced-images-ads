@@ -1,8 +1,27 @@
 import { defineConfig } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 
+// DEV ONLY: prints the map engine stats sent by the browser into this terminal
+function engineStatsToTerminal() {
+  return {
+    name: 'engine-stats-to-terminal',
+    configureServer(server) {
+      server.middlewares.use('/__engine-stats', (req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          const time = new Date().toLocaleTimeString();
+          console.log(`\x1b[36m[map stats ${time}]\x1b[0m ${body}`);
+          res.statusCode = 204;
+          res.end();
+        });
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [solidPlugin()],
+  plugins: [solidPlugin(), engineStatsToTerminal()],
   server: {
     port: 3000,
   },
