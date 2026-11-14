@@ -453,7 +453,10 @@ void clearHoverInfo() {
 double iconSizePx();
 
 // which post is under the mouse? pixels and icons sit on top of zones
+bool overCard(float sx, float sy);
+
 void updateHover(float sx, float sy) {
+  if (overCard(sx, sy)) return; // moving onto the open card keeps it open
   Merc m = screenToMerc(sx, sy);
   int found = -1;
   for (int i = int(posts.size()) - 1; i >= 0 && found < 0; i--) {
@@ -624,16 +627,17 @@ void drawSolidQuad(RGBA c, double x, double y, double w, double h) {
   gfx_quad_solid(float(x), float(y), float(w), float(h), c.r, c.g, c.b, c.a);
 }
 
-void drawLabel(const Post& p, double cxPx, double bottomPx) {
-  // the hovered / tapped post shows its full card (image + comment + address) instead
-  if (&p - posts.data() == hovered && hoverInfoTex) {
-    drawQuad(hoverInfoTex, std::round(cxPx - hoverInfoW / 2.0), std::round(bottomPx - hoverInfoH), hoverInfoW, hoverInfoH, 1.f);
-    return;
-  }
-  if (!p.labelTex) return;
+void drawLabel(const Post& p, double cxPx, double bottomPx, float alpha) {
+  if (!p.labelTex || alpha <= 0.01f) return;
   double w = p.lw, h = p.lh; // label textures are made at device pixel size
-  drawQuad(p.labelTex, std::round(cxPx - w / 2), std::round(bottomPx - h), w, h, p.alpha);
+  drawQuad(p.labelTex, std::round(cxPx - w / 2), std::round(bottomPx - h), w, h, alpha);
 }
+
+// Focus mode: while a post's card is open, the other posts and the post itself fade out
+// (the card already shows its image + comment). 0 = normal, 1 = fully focused.
+double focus = 0;
+double cardX = 0, cardY = 0, cardW = 0, cardH = 0; // where the card was last drawn (for hover)
+bool focusActive() { return hovered >= 0 && hovered < int(posts.size()) && hoverInfoTex; }
 
 double iconSizePx() {
   double s = cfg.iconSize;
@@ -650,54 +654,91 @@ Xform localXform(Merc origin) {
   return {float((origin.x - cam.cx) * wp + cam.w / 2.0), float((origin.y - cam.cy) * wp + cam.h / 2.0), float(wp / LOCAL)};
 }
 
+bool overCard(float sx, float sy) {
+  return focusActive() && focus > 0.5 && sx >= cardX && sx <= cardX + cardW && sy >= cardY && sy <= cardY + cardH;
+}
+
 void drawPosts() {
   const bool zoomedIn = cam.zoom >= cfg.adInfoZoom;
+  const float others = float(1.0 - focus);       // alpha for every other post
+  const float self = float(1.0 - focus);         // alpha for the focused post's own marker
+  const double gap = cfg.labelGap * cam.dpr;
+  const double dot = 8 * cam.dpr;                // small marker left at the focused spot
+
   // zones first (they sit on the ground), then markers and labels on top
   for (size_t i = 0; i < posts.size(); i++) {
     Post& p = posts[i];
     if (p.kind != P_ZONE) continue;
-    bool showImage = p.tex && !zoomedIn && hovered != int(i);
+    bool isFocus = int(i) == hovered;
+    float a = p.alpha * (isFocus ? 1.f : others);
+    if (a <= 0.01f) continue;
+    bool showImage = p.tex && !zoomedIn && !isFocus;
     Xform x = localXform(p.origin);
     if (showImage) {
-      gfx_tex(p.fillTex.id, x.ox, x.oy, x.scale, p.tex, p.alpha);
+      gfx_tex(p.fillTex.id, x.ox, x.oy, x.scale, p.tex, a);
     } else {
-      gfx_solid(p.fillTex.id, x.ox, x.oy, x.scale, cfg.zoneFill.r, cfg.zoneFill.g, cfg.zoneFill.b, cfg.zoneFill.a * p.alpha);
+      gfx_solid(p.fillTex.id, x.ox, x.oy, x.scale, cfg.zoneFill.r, cfg.zoneFill.g, cfg.zoneFill.b, cfg.zoneFill.a * a);
     }
     gfx_line(p.outline.id, x.ox, x.oy, x.scale, cfg.zoneBorderWidth * cam.dpr,
-             cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, p.draft ? 0.6f : 1.f);
+             cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, (p.draft ? 0.6f : 1.f) * (isFocus ? 1.f : others));
   }
+
+  double fx = 0, fy = 0, fLabelBottom = 0; // focused post: screen point + where its label would sit
+  bool haveFocus = false;
 
   for (size_t i = 0; i < posts.size(); i++) {
     const Post& p = posts[i];
-    double sx, sy;
+    bool isFocus = int(i) == hovered;
+    float a = p.alpha * (isFocus ? self : others);
+    double sx, sy, labelBottom;
     if (p.kind == P_PIXEL) {
       mercToScreen(p.at, sx, sy);
       double s = cfg.pixelSize * cam.dpr;
-      RGBA edge{0, 0, 0, 0.35f * p.alpha};
-      drawSolidQuad(edge, std::round(sx - s / 2), std::round(sy - s / 2), s, s);
-      RGBA c = cfg.pixelColor;
-      c.a *= p.alpha;
-      drawSolidQuad(c, std::round(sx - s / 2) + cam.dpr, std::round(sy - s / 2) + cam.dpr, s - 2 * cam.dpr, s - 2 * cam.dpr);
-      drawLabel(p, sx, sy - s / 2 - cfg.labelGap * cam.dpr);
+      labelBottom = sy - s / 2 - gap;
+      if (a > 0.01f) {
+        RGBA edge{0, 0, 0, 0.35f * a};
+        drawSolidQuad(edge, std::round(sx - s / 2), std::round(sy - s / 2), s, s);
+        RGBA c = cfg.pixelColor;
+        c.a *= a;
+        drawSolidQuad(c, std::round(sx - s / 2) + cam.dpr, std::round(sy - s / 2) + cam.dpr, s - 2 * cam.dpr, s - 2 * cam.dpr);
+        drawLabel(p, sx, labelBottom, a);
+      }
     } else if (p.kind == P_ICON) {
       mercToScreen(p.at, sx, sy);
       double s = iconSizePx();
       double maxDim = std::max(p.tw, p.th);
       double w = s * p.tw / maxDim, h = s * p.th / maxDim;
-      drawQuad(p.tex, std::round(sx - w / 2), std::round(sy - h / 2), w, h, p.alpha);
-      drawLabel(p, sx, sy - h / 2 - cfg.labelGap * cam.dpr);
+      labelBottom = sy - h / 2 - gap;
+      if (a > 0.01f) {
+        drawQuad(p.tex, std::round(sx - w / 2), std::round(sy - h / 2), w, h, a);
+        drawLabel(p, sx, labelBottom, a);
+      }
     } else {
-      bool showInfo = p.draft || zoomedIn || hovered == int(i);
-      if (!showInfo) continue;
+      bool showInfo = p.draft || zoomedIn || isFocus;
       mercToScreen(p.center, sx, sy);
-      if (p.thumbTex) {
-        double w = p.thw, h = p.thh;
-        drawQuad(p.thumbTex, std::round(sx - w / 2), std::round(sy - h / 2), w, h, p.alpha);
-        drawLabel(p, sx, sy - h / 2 - cfg.labelGap * cam.dpr);
-      } else {
-        drawLabel(p, sx, sy);
+      labelBottom = sy - (p.thumbTex ? p.thh / 2.0 : 0) - gap;
+      if (showInfo && a > 0.01f) {
+        if (p.thumbTex) drawQuad(p.thumbTex, std::round(sx - p.thw / 2.0), std::round(sy - p.thh / 2.0), p.thw, p.thh, a);
+        drawLabel(p, sx, labelBottom, a);
       }
     }
+    if (isFocus) { haveFocus = true; fx = sx; fy = sy; fLabelBottom = labelBottom; }
+  }
+
+  // the focused post: small red dot at its exact spot + the card pointing at it
+  if (haveFocus && focusActive()) {
+    float fa = float(focus);
+    RGBA edge{1, 1, 1, fa};
+    drawSolidQuad(edge, std::round(fx - dot / 2 - cam.dpr), std::round(fy - dot / 2 - cam.dpr), dot + 2 * cam.dpr, dot + 2 * cam.dpr);
+    RGBA c = cfg.pixelColor;
+    c.a = fa;
+    drawSolidQuad(c, std::round(fx - dot / 2), std::round(fy - dot / 2), dot, dot);
+    // slide from where the label was down to the dot
+    double bottom = fLabelBottom + (fy - dot / 2 - gap - fLabelBottom) * focus;
+    cardW = hoverInfoW; cardH = hoverInfoH;
+    cardX = std::round(fx - hoverInfoW / 2.0);
+    cardY = std::round(bottom - hoverInfoH);
+    drawQuad(hoverInfoTex, cardX, cardY, cardW, cardH, std::min(1.f, fa * 1.5f));
   }
 
   if (previewLine.id) {
@@ -1070,6 +1111,14 @@ EXPORT(engine_dblclick) void engine_dblclick(float x, float y) {
 // ---- one frame. Returns 0 = nothing drawn, 1 = drawn, 3 = drawn and still animating.
 EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
   if (w != cam.w || h != cam.h || dpr != cam.dpr) { cam.w = w; cam.h = h; cam.dpr = dpr; dirty = true; }
+  // focus fade (posts fading out around an open card)
+  double focusTarget = focusActive() ? 1.0 : 0.0;
+  bool focusMoving = std::fabs(focusTarget - focus) > 0.001;
+  if (focusMoving) {
+    focus += (focusTarget - focus) * 0.28;
+    if (std::fabs(focusTarget - focus) < 0.01) focus = focusTarget;
+    dirty = true;
+  }
   bool animating = std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
   if (animating) {
     double z = cam.zoom + (cam.targetZoom - cam.zoom) * 0.25;
@@ -1087,7 +1136,7 @@ EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
   drawPosts();
   gfx_end();
   evictTiles(now);
-  return animating ? 3 : 1;
+  return (animating || focusMoving) ? 3 : 1;
 }
 
 // called when a tile finishes loading, an image is ready, etc.

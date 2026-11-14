@@ -168,7 +168,7 @@ export class MapEngine {
     const now = performance.now();
     const secs = (now - this.statWindowStart) / 1000;
     if (secs >= 0.5) {
-      const moving = this.drawn >= 5; // a handful of redraws in half a second = something is moving
+      const moving = this.drawn >= 12; // steady redraws (not just a short fade) = something is moving
       const frameMs = this.drawn ? this.drawMsSum / this.drawn : this.lastStats.frameMs;
       this.lastStats = {
         backend: this.backend?.name ?? '',
