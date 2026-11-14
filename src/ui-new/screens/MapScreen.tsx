@@ -1,5 +1,5 @@
-import { Component, onMount, onCleanup, createEffect } from 'solid-js';
-import { MapEngine } from '../../infrastructure/engine/engine';
+import { Component, onMount, onCleanup, createEffect, createSignal, Show } from 'solid-js';
+import { MapEngine, type EngineStats } from '../../infrastructure/engine/engine';
 import { PostComposer } from '../components/panel/PostComposer';
 import { CheckoutModal } from '../components/panel/CheckoutModal';
 import { posts, draft, drawMode, postActions } from '../../use-cases/posts/posts-store';
@@ -15,6 +15,9 @@ import '../components/map/posts.css';
 export const MapScreen: Component = () => {
   let canvas!: HTMLCanvasElement;
   let engine: MapEngine | undefined;
+  const [stats, setStats] = createSignal<EngineStats | null>(null);
+  const [showStats, setShowStats] = createSignal(true);
+  let statsTimer = 0;
 
   onMount(async () => {
     const e = new MapEngine(canvas, {
@@ -43,9 +46,14 @@ export const MapScreen: Component = () => {
     });
 
     createEffect(() => e.setPlacingCursor(draft.placing));
+
+    statsTimer = window.setInterval(() => setStats({ ...e.stats() }), 500);
   });
 
-  onCleanup(() => engine?.destroy());
+  onCleanup(() => {
+    clearInterval(statsTimer);
+    engine?.destroy();
+  });
 
   return (
     <div>
@@ -54,6 +62,18 @@ export const MapScreen: Component = () => {
       <div class="interface-layer">
         <PostComposer />
       </div>
+
+      <Show when={stats()}>
+        {(st) => (
+          <div class="engine-stats" onClick={() => setShowStats(!showStats())} title="Click to hide/show">
+            <Show when={showStats()} fallback={<span>stats</span>}>
+              <div><b>{st().backend}</b> · C++ engine</div>
+              <div>{st().fps.toFixed(0)} fps · {st().frameMs.toFixed(2)} ms/frame</div>
+              <div>tiles: {st().tiles} · build {st().tileBuildMs.toFixed(1)} ms · {st().workers} workers</div>
+            </Show>
+          </div>
+        )}
+      </Show>
 
       <div class="map-attribution">
         <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> ·{' '}

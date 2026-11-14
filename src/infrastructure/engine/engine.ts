@@ -1,18 +1,21 @@
 // Bridge between the browser and the C++ map engine (engine/src/engine.cpp -> public/engine.wasm).
 //
-// The browser only lets JavaScript touch WebGL, the network and image decoding, so this file:
-//   * hands WebGL2 calls to the C++ engine (it decides what to draw)
-//   * downloads vector tiles and passes the raw bytes to C++
-//   * turns images and comment text into pixel buffers for C++ to upload to the GPU
+// The browser only lets JavaScript touch the GPU, the network and image decoding, so this file:
+//   * picks a GPU backend (WebGPU, or WebGL2 as fallback) that executes C++'s draw commands
+//   * runs background worker threads that download tiles and build them with the C++ code
+//   * turns images and comment text into pixel buffers for C++ to send to the GPU
 //   * forwards mouse / touch / wheel input to C++ (camera logic lives in C++)
 
 import type { Post } from '../../use-cases/posts/post-schemas';
 import type { Draft } from '../../use-cases/posts/posts-store';
 import type { LatLng } from '../../domain/geo/geo-schemas';
 import { ICON, MARKER, PIXEL, ZONE, ZOOM } from '../../config-new/constants';
+import type { GfxBackend } from './backends/backend';
+import { WebGPUBackend } from './backends/webgpu';
+import { WebGL2Backend } from './backends/webgl2';
 
 const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
-const MAX_PARALLEL_TILES = 8;
+const MAX_TILES_PER_WORKER = 3;
 
 type Exports = {
   memory: WebAssembly.Memory;
@@ -25,7 +28,9 @@ type Exports = {
   engine_get_zoom: () => number;
   engine_screen_to_lnglat: (x: number, y: number, out: number) => void;
   engine_lnglat_to_screen: (lng: number, lat: number, out: number) => void;
-  engine_tile_loaded: (z: number, x: number, y: number, ptr: number, len: number) => void;
+  engine_tile_upload: (z: number, x: number, y: number, ptr: number, len: number) => void;
+  worker_build_tile: (ptr: number, len: number) => number;
+  engine_stat_tiles: () => number;
   engine_tile_failed: (z: number, x: number, y: number) => void;
   engine_tex_create: (ptr: number, w: number, h: number) => number;
   engine_tex_delete: (t: number) => void;
@@ -47,6 +52,15 @@ type Exports = {
 
 interface Tex { tex: number; w: number; h: number }
 
+export interface EngineStats {
+  backend: string;
+  workers: number;
+  fps: number;          // frames actually drawn per second
+  frameMs: number;      // average CPU time per drawn frame (C++ + backend)
+  tileBuildMs: number;  // average time to decode + triangulate a tile (in workers)
+  tiles: number;        // tiles ready on the GPU
+}
+
 export interface EngineEvents {
   onClick?: (at: LatLng) => void;
   onHoverZone?: (postId: string | null) => void;
@@ -54,11 +68,19 @@ export interface EngineEvents {
 
 export class MapEngine {
   private ex!: Exports;
-  private gl!: WebGL2RenderingContext;
-  private handles: any[] = [null];
+  backend!: GfxBackend;
+  private module!: WebAssembly.Module;
   private tileUrl = '';
   private tileQueue: [number, number, number][] = [];
-  private tilesInFlight = 0;
+  private workers: { w: Worker; busy: number }[] = [];
+  private mainThreadBusy = 0;
+  // stats
+  private drawn = 0;
+  private drawMsSum = 0;
+  private buildMsSum = 0;
+  private builds = 0;
+  private statWindowStart = performance.now();
+  private lastStats: EngineStats = { backend: '', workers: 0, fps: 0, frameMs: 0, tileBuildMs: 0, tiles: 0 };
   private texCache = new Map<string, Promise<Tex>>();
   private postIds: string[] = [];
   private raf = 0;
@@ -76,13 +98,18 @@ export class MapEngine {
 
   // ------------------------------------------------------------ setup
   async start(center: [number, number], zoom: number) {
-    const gl = this.canvas.getContext('webgl2', { antialias: true, premultipliedAlpha: true, alpha: false });
-    if (!gl) throw new Error('WebGL2 is not available in this browser');
-    this.gl = gl;
+    // WebGPU first; WebGL2 if the browser doesn't have it (or ?renderer=webgl in the URL)
+    const choice = new URLSearchParams(location.search).get('renderer'); // 'webgl' | 'webgpu-offscreen' (debug)
+    const backend =
+      (choice !== 'webgl' && (await WebGPUBackend.create(this.canvas, choice === 'webgpu-offscreen'))) ||
+      WebGL2Backend.create(this.canvas);
+    if (!backend) throw new Error('This browser supports neither WebGPU nor WebGL2');
+    this.backend = backend;
+    console.log(`[engine] renderer: ${backend.name}`);
 
-    const bytes = await (await fetch(`${import.meta.env.BASE_URL}engine.wasm`)).arrayBuffer();
-    const { instance } = await WebAssembly.instantiate(bytes, {
-      gl: this.glImports(),
+    this.module = await WebAssembly.compileStreaming(fetch(`${import.meta.env.BASE_URL}engine.wasm`));
+    const instance = await WebAssembly.instantiate(this.module, {
+      gfx: backend.imports(() => this.ex.memory.buffer),
       env: this.envImports(),
       wasi_snapshot_preview1: this.wasiImports(),
     });
@@ -98,6 +125,7 @@ export class MapEngine {
     this.scratch = this.ex.engine_alloc(16);
 
     this.bindInput();
+    this.startWorkers();
     this.loop();
 
     try {
@@ -111,6 +139,26 @@ export class MapEngine {
 
   destroy() {
     cancelAnimationFrame(this.raf);
+    this.workers.forEach((w) => w.w.terminate());
+  }
+
+  stats(): EngineStats {
+    const now = performance.now();
+    const secs = (now - this.statWindowStart) / 1000;
+    if (secs >= 0.5) {
+      this.lastStats = {
+        backend: this.backend?.name ?? '',
+        workers: this.workers.length,
+        fps: this.drawn / secs,
+        frameMs: this.drawn ? this.drawMsSum / this.drawn : 0,
+        tileBuildMs: this.builds ? this.buildMsSum / this.builds : this.lastStats.tileBuildMs,
+        tiles: this.ex ? this.ex.engine_stat_tiles() : 0,
+      };
+      this.drawn = 0;
+      this.drawMsSum = 0;
+      this.statWindowStart = now;
+    }
+    return this.lastStats;
   }
 
   private loop = () => {
@@ -125,7 +173,12 @@ export class MapEngine {
       this.dpr = dpr;
       this.texCache.clear(); // labels are drawn at device resolution
     }
-    this.ex.engine_frame(w, h, dpr);
+    const t0 = performance.now();
+    const r = this.ex.engine_frame(w, h, dpr);
+    if (r & 1) {
+      this.drawn++;
+      this.drawMsSum += performance.now() - t0;
+    }
     this.raf = requestAnimationFrame(this.loop);
   };
 
@@ -315,33 +368,82 @@ export class MapEngine {
     return { x: f[0] / this.dpr, y: f[1] / this.dpr };
   }
 
-  // ------------------------------------------------------------ tiles
-  private pumpTiles() {
-    if (!this.tileUrl) return;
-    while (this.tilesInFlight < MAX_PARALLEL_TILES && this.tileQueue.length) {
-      const [z, x, y] = this.tileQueue.pop()!; // newest first = what you're looking at now
-      this.tilesInFlight++;
-      this.fetchTile(z, x, y).finally(() => {
-        this.tilesInFlight--;
-        this.pumpTiles();
-      });
+  // ------------------------------------------------------------ tiles (background workers)
+  private startWorkers() {
+    const n = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1));
+    for (let i = 0; i < n; i++) {
+      try {
+        const w = new Worker(new URL('./tile-worker.ts', import.meta.url), { type: 'module' });
+        const slot = { w, busy: 0 };
+        w.onmessage = (e) => this.onWorkerMessage(slot, e.data);
+        w.postMessage({ type: 'init', module: this.module });
+        this.workers.push(slot);
+      } catch (e) {
+        console.warn('Workers unavailable, building tiles on the main thread', e);
+        break;
+      }
     }
   }
 
-  private async fetchTile(z: number, x: number, y: number) {
-    const url = this.tileUrl.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y));
+  private onWorkerMessage(slot: { busy: number }, msg: any) {
+    if (msg.type === 'ready') return this.pumpTiles();
+    slot.busy--;
+    if (msg.type === 'tile') {
+      this.buildMsSum += msg.ms;
+      this.builds++;
+      const blob = msg.blob as Uint8Array;
+      const ptr = this.ex.engine_alloc(blob.length);
+      new Uint8Array(this.ex.memory.buffer, ptr, blob.length).set(blob);
+      this.ex.engine_tile_upload(msg.z, msg.x, msg.y, ptr, blob.length);
+      this.ex.engine_free(ptr);
+    } else {
+      this.ex.engine_tile_failed(msg.z, msg.x, msg.y);
+    }
+    this.pumpTiles();
+  }
+
+  private tileUrlFor(z: number, x: number, y: number) {
+    return this.tileUrl.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y));
+  }
+
+  private pumpTiles() {
+    if (!this.tileUrl) return;
+    if (!this.workers.length) {
+      // no workers: build on the main thread
+      while (this.mainThreadBusy < 6 && this.tileQueue.length) {
+        const [z, x, y] = this.tileQueue.pop()!;
+        this.mainThreadBusy++;
+        this.fetchTileHere(z, x, y).finally(() => { this.mainThreadBusy--; this.pumpTiles(); });
+      }
+      return;
+    }
+    while (this.tileQueue.length) {
+      const slot = this.workers.reduce((a, b) => (b.busy < a.busy ? b : a));
+      if (slot.busy >= MAX_TILES_PER_WORKER) break;
+      const [z, x, y] = this.tileQueue.pop()!; // newest first = what you're looking at now
+      slot.busy++;
+      slot.w.postMessage({ type: 'tile', z, x, y, url: this.tileUrlFor(z, x, y) });
+    }
+  }
+
+  private async fetchTileHere(z: number, x: number, y: number) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(this.tileUrlFor(z, x, y));
       if (!res.ok) throw new Error(String(res.status));
       let buf = new Uint8Array(await res.arrayBuffer());
       if (buf[0] === 0x1f && buf[1] === 0x8b) {
         const ds = new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip')));
         buf = new Uint8Array(await ds.arrayBuffer());
       }
+      const t0 = performance.now();
       const ptr = this.ex.engine_alloc(buf.length);
       new Uint8Array(this.ex.memory.buffer, ptr, buf.length).set(buf);
-      this.ex.engine_tile_loaded(z, x, y, ptr, buf.length);
+      const out = this.ex.worker_build_tile(ptr, buf.length);
       this.ex.engine_free(ptr);
+      const size = new Uint32Array(this.ex.memory.buffer, out, 1)[0];
+      this.buildMsSum += performance.now() - t0;
+      this.builds++;
+      this.ex.engine_tile_upload(z, x, y, out, size);
     } catch {
       this.ex.engine_tile_failed(z, x, y);
     }
@@ -439,71 +541,6 @@ export class MapEngine {
   // ------------------------------------------------------------ imports for C++
   private str(ptr: number, len: number) {
     return new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, ptr, len));
-  }
-
-  private glImports() {
-    const H = this.handles;
-    const add = (o: any) => { H.push(o); return H.length - 1; };
-    const g = () => this.gl;
-    const self = this;
-    return {
-      createShader: (t: number) => add(g().createShader(t)),
-      shaderSource: (s: number, p: number, l: number) => g().shaderSource(H[s], self.str(p, l)),
-      compileShader: (s: number) => {
-        g().compileShader(H[s]);
-        const ok = g().getShaderParameter(H[s], g().COMPILE_STATUS);
-        if (!ok) console.error(g().getShaderInfoLog(H[s]));
-        return ok ? 1 : 0;
-      },
-      createProgram: () => add(g().createProgram()),
-      attachShader: (p: number, s: number) => g().attachShader(H[p], H[s]),
-      linkProgram: (p: number) => {
-        g().linkProgram(H[p]);
-        const ok = g().getProgramParameter(H[p], g().LINK_STATUS);
-        if (!ok) console.error(g().getProgramInfoLog(H[p]));
-        return ok ? 1 : 0;
-      },
-      useProgram: (p: number) => g().useProgram(H[p]),
-      getUniformLocation: (p: number, n: number, l: number) => {
-        const loc = g().getUniformLocation(H[p], self.str(n, l));
-        return loc ? add(loc) : 0;
-      },
-      uniform1f: (l: number, a: number) => l && g().uniform1f(H[l], a),
-      uniform2f: (l: number, a: number, b: number) => l && g().uniform2f(H[l], a, b),
-      uniform4f: (l: number, a: number, b: number, c: number, d: number) => l && g().uniform4f(H[l], a, b, c, d),
-      uniform1i: (l: number, a: number) => l && g().uniform1i(H[l], a),
-      createBuffer: () => add(g().createBuffer()),
-      deleteBuffer: (b: number) => { g().deleteBuffer(H[b]); H[b] = null; },
-      bindBuffer: (t: number, b: number) => g().bindBuffer(t, H[b]),
-      bufferData: (t: number, p: number, n: number, u: number) =>
-        g().bufferData(t, new Uint8Array(self.ex.memory.buffer, p, n), u),
-      createVertexArray: () => add(g().createVertexArray()),
-      deleteVertexArray: (v: number) => { g().deleteVertexArray(H[v]); H[v] = null; },
-      bindVertexArray: (v: number) => g().bindVertexArray(H[v]),
-      enableVertexAttribArray: (i: number) => g().enableVertexAttribArray(i),
-      vertexAttribPointer: (i: number, s: number, t: number, n: number, st: number, o: number) =>
-        g().vertexAttribPointer(i, s, t, !!n, st, o),
-      drawArrays: (m: number, f: number, c: number) => g().drawArrays(m, f, c),
-      drawElements: (m: number, c: number, t: number, o: number) => g().drawElements(m, c, t, o),
-      viewport: (x: number, y: number, w: number, h: number) => g().viewport(x, y, w, h),
-      clearColor: (r: number, gg: number, b: number, a: number) => g().clearColor(r, gg, b, a),
-      clear: (m: number) => g().clear(m),
-      enable: (c: number) => g().enable(c),
-      disable: (c: number) => g().disable(c),
-      blendFunc: (s: number, d: number) => g().blendFunc(s, d),
-      createTexture: () => add(g().createTexture()),
-      deleteTexture: (t: number) => { g().deleteTexture(H[t]); H[t] = null; },
-      bindTexture: (t: number, x: number) => g().bindTexture(t, H[x]),
-      activeTexture: (u: number) => g().activeTexture(u),
-      texImage2D: (w: number, h: number, p: number) => {
-        const gl = g();
-        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE,
-          new Uint8Array(self.ex.memory.buffer, p, w * h * 4));
-      },
-      texParameteri: (t: number, p: number, v: number) => g().texParameteri(t, p, v),
-      generateMipmap: (t: number) => g().generateMipmap(t),
-    };
   }
 
   private envImports() {

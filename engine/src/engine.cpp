@@ -8,7 +8,8 @@
 //   * GPU rendering of posts: red pixels, 225px icons, zone images, comment bubbles
 //   * zone hover hit-testing and the zoom/hover visibility rule
 //
-// JavaScript only provides WebGL calls, network downloads and image decoding.
+// JavaScript only executes draw commands (WebGPU or WebGL2), downloads tiles in
+// background workers, and decodes images.
 
 #include <algorithm>
 #include <array>
@@ -21,7 +22,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "gl.hpp"
+#include "gfx.hpp"
 #include "mvt.hpp"
 #include "../third_party/mapbox/earcut.hpp"
 
@@ -129,124 +130,19 @@ int bucketFor(const mvt::Layer& l, const mvt::Feature& f) {
   return -1;
 }
 
-// ---------------------------------------------------------------- shaders
-struct Program {
-  int id = 0;
-  int u_offset = 0, u_scale = 0, u_view = 0, u_color = 0, u_width = 0, u_tex = 0, u_alpha = 0;
-};
-
-int compile(int type, const char* src) {
-  int s = glCreateShader(type);
-  glShaderSource(s, src, int(std::strlen(src)));
-  if (!glCompileShader(s)) log("shader compile failed");
-  return s;
-}
-
-Program link(const char* vs, const char* fs) {
-  Program p;
-  p.id = glCreateProgram();
-  glAttachShader(p.id, compile(GL_VERTEX_SHADER, vs));
-  glAttachShader(p.id, compile(GL_FRAGMENT_SHADER, fs));
-  if (!glLinkProgram(p.id)) log("program link failed");
-  auto U = [&](const char* n) { return glGetUniformLocation(p.id, n, int(std::strlen(n))); };
-  p.u_offset = U("u_offset");
-  p.u_scale = U("u_scale");
-  p.u_view = U("u_view");
-  p.u_color = U("u_color");
-  p.u_width = U("u_width");
-  p.u_tex = U("u_tex");
-  p.u_alpha = U("u_alpha");
-  return p;
-}
-
-const char* VS_SOLID = R"(#version 300 es
-layout(location=0) in vec2 a_pos;
-uniform vec2 u_offset; uniform float u_scale; uniform vec2 u_view;
-void main() {
-  vec2 px = u_offset + a_pos * u_scale;
-  gl_Position = vec4(px.x / u_view.x * 2.0 - 1.0, 1.0 - px.y / u_view.y * 2.0, 0.0, 1.0);
-})";
-
-const char* VS_LINE = R"(#version 300 es
-layout(location=0) in vec2 a_pos;
-layout(location=1) in vec2 a_extrude;
-uniform vec2 u_offset; uniform float u_scale; uniform vec2 u_view; uniform float u_width;
-void main() {
-  vec2 px = u_offset + a_pos * u_scale + a_extrude * (u_width * 0.5);
-  gl_Position = vec4(px.x / u_view.x * 2.0 - 1.0, 1.0 - px.y / u_view.y * 2.0, 0.0, 1.0);
-})";
-
-const char* FS_SOLID = R"(#version 300 es
-precision mediump float;
-uniform vec4 u_color; out vec4 o;
-void main() { o = vec4(u_color.rgb * u_color.a, u_color.a); })";
-
-const char* VS_TEX = R"(#version 300 es
-layout(location=0) in vec2 a_pos;
-layout(location=1) in vec2 a_uv;
-uniform vec2 u_offset; uniform float u_scale; uniform vec2 u_view;
-out vec2 v_uv;
-void main() {
-  vec2 px = u_offset + a_pos * u_scale;
-  v_uv = a_uv;
-  gl_Position = vec4(px.x / u_view.x * 2.0 - 1.0, 1.0 - px.y / u_view.y * 2.0, 0.0, 1.0);
-})";
-
-const char* FS_TEX = R"(#version 300 es
-precision mediump float;
-uniform sampler2D u_tex; uniform float u_alpha;
-in vec2 v_uv; out vec4 o;
-void main() { o = texture(u_tex, v_uv) * u_alpha; })";
-
-Program P_SOLID, P_LINE, P_TEX;
-
 // ---------------------------------------------------------------- GPU meshes
 struct Mesh {
-  int vao = 0, vbo = 0, ibo = 0;
-  int count = 0;      // index count (fill) or vertex count (line / tex)
-  bool indexed = false;
-  void destroy() {
-    if (vao) glDeleteVertexArray(vao);
-    if (vbo) glDeleteBuffer(vbo);
-    if (ibo) glDeleteBuffer(ibo);
-    vao = vbo = ibo = count = 0;
-  }
+  int id = 0;
+  void destroy() { if (id) gfx_mesh_delete(id); id = 0; }
 };
 
 // floats per vertex: 2 (pos) or 4 (pos + extrude/uv)
 Mesh upload(const std::vector<float>& verts, int floatsPerVertex, const std::vector<uint32_t>* indices) {
   Mesh m;
   if (verts.empty()) return m;
-  m.vao = glCreateVertexArray();
-  glBindVertexArray(m.vao);
-  m.vbo = glCreateBuffer();
-  glBindBuffer(GL_ARRAY_BUFFER, m.vbo);
-  glBufferData(GL_ARRAY_BUFFER, verts.data(), int(verts.size() * sizeof(float)), GL_STATIC_DRAW);
-  int stride = floatsPerVertex * 4;
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, 0, stride, 0);
-  if (floatsPerVertex == 4) {
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, 0, stride, 8);
-  }
-  if (indices && !indices->empty()) {
-    m.ibo = glCreateBuffer();
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m.ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices->data(), int(indices->size() * 4), GL_STATIC_DRAW);
-    m.count = int(indices->size());
-    m.indexed = true;
-  } else {
-    m.count = int(verts.size() / floatsPerVertex);
-  }
-  glBindVertexArray(0);
+  m.id = gfx_mesh_create(verts.data(), int(verts.size()), floatsPerVertex,
+                         indices ? indices->data() : nullptr, indices ? int(indices->size()) : 0);
   return m;
-}
-
-void drawMesh(const Mesh& m) {
-  if (!m.vao || !m.count) return;
-  glBindVertexArray(m.vao);
-  if (m.indexed) glDrawElements(GL_TRIANGLES, m.count, GL_UNSIGNED_INT, 0);
-  else glDrawArrays(GL_TRIANGLES, 0, m.count);
 }
 
 // Lines become thin triangles with square caps; the width is applied in the shader,
@@ -331,12 +227,17 @@ struct Tile {
 
 std::unordered_map<TileKey, Tile, TileKeyHash> tiles;
 
-void buildTile(Tile& t, const uint8_t* data, size_t len) {
+// Decode + triangulate one tile into a compact binary blob.
+// This runs inside a background Web Worker (its own copy of this engine), so the
+// main thread never stalls on big city tiles.
+// blob: u32 totalBytes, u32 extent, then per bucket: u32 nFloats, u32 nIdx, f32[nFloats], u32[nIdx]
+std::vector<uint8_t> buildTileBlob(const uint8_t* data, size_t len) {
   std::vector<mvt::Layer> layers = mvt::readTile(data, len);
   std::vector<float> verts[B_COUNT];
   std::vector<uint32_t> idx[B_COUNT];
+  uint32_t extent = 4096;
   for (const auto& l : layers) {
-    t.extent = l.extent ? l.extent : 4096;
+    extent = l.extent ? l.extent : 4096;
     for (const auto& f : l.features) {
       int b = bucketFor(l, f);
       if (b < 0) continue;
@@ -348,9 +249,39 @@ void buildTile(Tile& t, const uint8_t* data, size_t len) {
       }
     }
   }
+  size_t total = 8;
+  for (int b = 0; b < B_COUNT; b++) total += 8 + verts[b].size() * 4 + idx[b].size() * 4;
+  std::vector<uint8_t> out(total);
+  uint8_t* w = out.data();
+  auto put32 = [&](uint32_t v) { std::memcpy(w, &v, 4); w += 4; };
+  put32(uint32_t(total));
+  put32(extent);
   for (int b = 0; b < B_COUNT; b++) {
-    if (verts[b].empty()) continue;
-    t.buckets[b] = STYLES[b].kind == FILL ? upload(verts[b], 2, &idx[b]) : upload(verts[b], 4, nullptr);
+    put32(uint32_t(verts[b].size()));
+    put32(uint32_t(idx[b].size()));
+    std::memcpy(w, verts[b].data(), verts[b].size() * 4); w += verts[b].size() * 4;
+    std::memcpy(w, idx[b].data(), idx[b].size() * 4); w += idx[b].size() * 4;
+  }
+  return out;
+}
+
+void uploadTileBlob(Tile& t, const uint8_t* blob, size_t len) {
+  if (len < 8) { t.state = FAILED; return; }
+  const uint8_t* r = blob;
+  const uint8_t* end = blob + len;
+  auto get32 = [&]() { uint32_t v = 0; if (r + 4 <= end) std::memcpy(&v, r, 4); r += 4; return v; };
+  get32(); // total
+  t.extent = get32();
+  for (int b = 0; b < B_COUNT && r < end; b++) {
+    uint32_t nf = get32(), ni = get32();
+    if (r + size_t(nf) * 4 + size_t(ni) * 4 > end) break;
+    const float* v = reinterpret_cast<const float*>(r);
+    r += size_t(nf) * 4;
+    const uint32_t* ix = reinterpret_cast<const uint32_t*>(r);
+    r += size_t(ni) * 4;
+    if (!nf) continue;
+    int fpv = STYLES[b].kind == FILL ? 2 : 4;
+    t.buckets[b].id = gfx_mesh_create(v, int(nf), fpv, ni ? ix : nullptr, int(ni));
   }
   t.state = READY;
 }
@@ -447,7 +378,6 @@ int hovered = -1;
 Mesh previewLine;
 std::vector<Merc> preview;
 Merc previewOrigin{};
-int quadVao = 0, quadVbo = 0;
 
 void destroyPost(Post& p) { p.fillTex.destroy(); p.outline.destroy(); }
 
@@ -475,44 +405,12 @@ void updateHover(float sx, float sy) {
   }
 }
 
-// draw a textured rectangle: (x, y) is the top-left corner in device pixels
 void drawQuad(int tex, double x, double y, double w, double h, float alpha) {
-  if (!tex) return;
-  float v[24] = {0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 0, 1};
-  // scale is applied via u_scale on a unit quad; width/height differ so build the quad directly
-  float q[24] = {
-    float(x), float(y), 0, 0,  float(x + w), float(y), 1, 0,  float(x), float(y + h), 0, 1,
-    float(x + w), float(y), 1, 0,  float(x + w), float(y + h), 1, 1,  float(x), float(y + h), 0, 1,
-  };
-  (void)v;
-  glBindVertexArray(quadVao);
-  glBindBuffer(GL_ARRAY_BUFFER, quadVbo);
-  glBufferData(GL_ARRAY_BUFFER, q, sizeof(q), GL_DYNAMIC_DRAW);
-  glUseProgram(P_TEX.id);
-  glUniform2f(P_TEX.u_offset, 0, 0);
-  glUniform1f(P_TEX.u_scale, 1);
-  glUniform2f(P_TEX.u_view, float(cam.w), float(cam.h));
-  glUniform1f(P_TEX.u_alpha, alpha);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, tex);
-  glUniform1i(P_TEX.u_tex, 0);
-  glDrawArrays(GL_TRIANGLES, 0, 6);
+  if (tex) gfx_quad_tex(tex, float(x), float(y), float(w), float(h), alpha);
 }
 
 void drawSolidQuad(RGBA c, double x, double y, double w, double h) {
-  float q[12] = {float(x), float(y), float(x + w), float(y), float(x), float(y + h),
-                 float(x + w), float(y), float(x + w), float(y + h), float(x), float(y + h)};
-  float q4[24];
-  for (int i = 0; i < 6; i++) { q4[i * 4] = q[i * 2]; q4[i * 4 + 1] = q[i * 2 + 1]; q4[i * 4 + 2] = 0; q4[i * 4 + 3] = 0; }
-  glBindVertexArray(quadVao);
-  glBindBuffer(GL_ARRAY_BUFFER, quadVbo);
-  glBufferData(GL_ARRAY_BUFFER, q4, sizeof(q4), GL_DYNAMIC_DRAW);
-  glUseProgram(P_SOLID.id);
-  glUniform2f(P_SOLID.u_offset, 0, 0);
-  glUniform1f(P_SOLID.u_scale, 1);
-  glUniform2f(P_SOLID.u_view, float(cam.w), float(cam.h));
-  glUniform4f(P_SOLID.u_color, c.r, c.g, c.b, c.a);
-  glDrawArrays(GL_TRIANGLES, 0, 6);
+  gfx_quad_solid(float(x), float(y), float(w), float(h), c.r, c.g, c.b, c.a);
 }
 
 void drawLabel(const Post& p, double cxPx, double bottomPx) {
@@ -530,11 +428,10 @@ double iconSizePx() {
   return s * cam.dpr;
 }
 
-void setLocalUniforms(const Program& pr, Merc origin) {
+struct Xform { float ox, oy, scale; };
+Xform localXform(Merc origin) {
   double wp = cam.worldPx();
-  glUniform2f(pr.u_offset, float((origin.x - cam.cx) * wp + cam.w / 2.0), float((origin.y - cam.cy) * wp + cam.h / 2.0));
-  glUniform1f(pr.u_scale, float(wp / LOCAL));
-  glUniform2f(pr.u_view, float(cam.w), float(cam.h));
+  return {float((origin.x - cam.cx) * wp + cam.w / 2.0), float((origin.y - cam.cy) * wp + cam.h / 2.0), float(wp / LOCAL)};
 }
 
 void drawPosts() {
@@ -544,25 +441,14 @@ void drawPosts() {
     Post& p = posts[i];
     if (p.kind != P_ZONE) continue;
     bool showImage = p.tex && !zoomedIn && hovered != int(i);
+    Xform x = localXform(p.origin);
     if (showImage) {
-      glUseProgram(P_TEX.id);
-      setLocalUniforms(P_TEX, p.origin);
-      glUniform1f(P_TEX.u_alpha, p.alpha);
-      glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_2D, p.tex);
-      glUniform1i(P_TEX.u_tex, 0);
-      drawMesh(p.fillTex);
+      gfx_tex(p.fillTex.id, x.ox, x.oy, x.scale, p.tex, p.alpha);
     } else {
-      glUseProgram(P_SOLID.id);
-      setLocalUniforms(P_SOLID, p.origin);
-      glUniform4f(P_SOLID.u_color, cfg.zoneFill.r, cfg.zoneFill.g, cfg.zoneFill.b, cfg.zoneFill.a * p.alpha);
-      drawMesh(p.fillTex);
+      gfx_solid(p.fillTex.id, x.ox, x.oy, x.scale, cfg.zoneFill.r, cfg.zoneFill.g, cfg.zoneFill.b, cfg.zoneFill.a * p.alpha);
     }
-    glUseProgram(P_LINE.id);
-    setLocalUniforms(P_LINE, p.origin);
-    glUniform1f(P_LINE.u_width, cfg.zoneBorderWidth * cam.dpr);
-    glUniform4f(P_LINE.u_color, cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, p.draft ? 0.6f : 1.f);
-    drawMesh(p.outline);
+    gfx_line(p.outline.id, x.ox, x.oy, x.scale, cfg.zoneBorderWidth * cam.dpr,
+             cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, p.draft ? 0.6f : 1.f);
   }
 
   for (size_t i = 0; i < posts.size(); i++) {
@@ -598,12 +484,9 @@ void drawPosts() {
     }
   }
 
-  if (previewLine.count) {
-    glUseProgram(P_LINE.id);
-    setLocalUniforms(P_LINE, previewOrigin);
-    glUniform1f(P_LINE.u_width, 2.0f * cam.dpr);
-    glUniform4f(P_LINE.u_color, cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, 0.9f);
-    drawMesh(previewLine);
+  if (previewLine.id) {
+    Xform x = localXform(previewOrigin);
+    gfx_line(previewLine.id, x.ox, x.oy, x.scale, 2.0f * cam.dpr, cfg.zoneBorder.r, cfg.zoneBorder.g, cfg.zoneBorder.b, 0.9f);
   }
 }
 
@@ -660,25 +543,25 @@ std::vector<DrawTile> collectTiles(double now) {
   return out;
 }
 
-void tileUniforms(const Program& pr, const DrawTile& d) {
+Xform tileXform(const DrawTile& d) {
   double n = double(1 << d.key.z);
   double wp = cam.worldPx();
-  double ox = (d.key.x / n - cam.cx) * wp + cam.w / 2.0;
-  double oy = (d.key.y / n - cam.cy) * wp + cam.h / 2.0;
-  glUniform2f(pr.u_offset, float(ox), float(oy));
-  glUniform1f(pr.u_scale, float(wp / n / d.tile->extent));
-  glUniform2f(pr.u_view, float(cam.w), float(cam.h));
+  return {float((d.key.x / n - cam.cx) * wp + cam.w / 2.0), float((d.key.y / n - cam.cy) * wp + cam.h / 2.0),
+          float(wp / n / d.tile->extent)};
 }
 
 void drawBaseMap(const std::vector<DrawTile>& list) {
-  glUseProgram(P_SOLID.id);
+  std::vector<Xform> xf;
+  xf.reserve(list.size());
+  for (auto& d : list) xf.push_back(tileXform(d));
   for (BucketId b : FILL_ORDER) {
     const Style& s = STYLES[b];
     if (cam.zoom < s.minZoom) continue;
-    glUniform4f(P_SOLID.u_color, s.color.r, s.color.g, s.color.b, s.color.a);
-    for (auto& d : list) { tileUniforms(P_SOLID, d); drawMesh(d.tile->buckets[b]); }
+    for (size_t i = 0; i < list.size(); i++) {
+      int m = list[i].tile->buckets[b].id;
+      if (m) gfx_solid(m, xf[i].ox, xf[i].oy, xf[i].scale, s.color.r, s.color.g, s.color.b, s.color.a);
+    }
   }
-  glUseProgram(P_LINE.id);
   // casings (darker, wider) under all roads, then the road fills
   for (int pass = 0; pass < 2; pass++) {
     for (BucketId b : LINE_ORDER) {
@@ -687,9 +570,10 @@ void drawBaseMap(const std::vector<DrawTile>& list) {
       if (pass == 0 && s.casing.a == 0) continue;
       RGBA c = pass == 0 ? s.casing : s.color;
       float w = lineWidthPx(s) + (pass == 0 ? 2.0f * cam.dpr : 0.f);
-      glUniform4f(P_LINE.u_color, c.r, c.g, c.b, c.a);
-      glUniform1f(P_LINE.u_width, w);
-      for (auto& d : list) { tileUniforms(P_LINE, d); drawMesh(d.tile->buckets[b]); }
+      for (size_t i = 0; i < list.size(); i++) {
+        int m = list[i].tile->buckets[b].id;
+        if (m) gfx_line(m, xf[i].ox, xf[i].oy, xf[i].scale, w, c.r, c.g, c.b, c.a);
+      }
     }
   }
 }
@@ -701,21 +585,7 @@ void drawBaseMap(const std::vector<DrawTile>& list) {
 EXPORT(engine_alloc) void* engine_alloc(int n) { return std::malloc(size_t(n)); }
 EXPORT(engine_free) void engine_free(void* p) { std::free(p); }
 
-EXPORT(engine_init) void engine_init() {
-  P_SOLID = link(VS_SOLID, FS_SOLID);
-  P_LINE = link(VS_LINE, FS_SOLID);
-  P_TEX = link(VS_TEX, FS_TEX);
-  quadVao = glCreateVertexArray();
-  glBindVertexArray(quadVao);
-  quadVbo = glCreateBuffer();
-  glBindBuffer(GL_ARRAY_BUFFER, quadVbo);
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, 0, 16, 0);
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 2, GL_FLOAT, 0, 16, 8);
-  glBindVertexArray(0);
-  log("C++ map engine ready");
-}
+EXPORT(engine_init) void engine_init() { log("C++ map engine ready"); }
 
 EXPORT(engine_config) void engine_config(float iconSize, float iconRefZoom, float iconMin, int iconScale,
                                          float pixelSize, uint32_t pixelColor, float markerSize, float adInfoZoom,
@@ -744,10 +614,19 @@ EXPORT(engine_lnglat_to_screen) void engine_lnglat_to_screen(double lng, double 
 }
 
 // ---- tiles
-EXPORT(engine_tile_loaded) void engine_tile_loaded(int z, int x, int y, const uint8_t* data, int len) {
+// Called inside a background worker: raw tile bytes -> triangulated blob.
+// Returns a pointer to the blob; its first u32 is the blob size. Valid until the next call.
+EXPORT(worker_build_tile) const uint8_t* worker_build_tile(const uint8_t* data, int len) {
+  static std::vector<uint8_t> blob;
+  blob = buildTileBlob(data, size_t(len));
+  return blob.data();
+}
+
+// Called on the main thread with a blob from a worker: upload it to the GPU.
+EXPORT(engine_tile_upload) void engine_tile_upload(int z, int x, int y, const uint8_t* blob, int len) {
   auto it = tiles.find(TileKey{z, x, y});
   if (it == tiles.end()) return; // evicted while loading
-  buildTile(it->second, data, size_t(len));
+  uploadTileBlob(it->second, blob, size_t(len));
   dirty = true;
 }
 EXPORT(engine_tile_failed) void engine_tile_failed(int z, int x, int y) {
@@ -755,18 +634,16 @@ EXPORT(engine_tile_failed) void engine_tile_failed(int z, int x, int y) {
   if (it != tiles.end()) it->second.state = FAILED;
 }
 
-// ---- textures (RGBA, premultiplied by the bridge)
-EXPORT(engine_tex_create) int engine_tex_create(const uint8_t* rgba, int w, int h) {
-  int t = glCreateTexture();
-  glBindTexture(GL_TEXTURE_2D, t);
-  glTexImage2D(w, h, rgba);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  return t;
+// ---- textures (RGBA, not premultiplied)
+EXPORT(engine_tex_create) int engine_tex_create(const uint8_t* rgba, int w, int h) { return gfx_tex_create(rgba, w, h); }
+EXPORT(engine_tex_delete) void engine_tex_delete(int t) { gfx_tex_delete(t); }
+
+// ---- stats for the on-screen overlay
+EXPORT(engine_stat_tiles) int engine_stat_tiles() {
+  int n = 0;
+  for (auto& [k, t] : tiles) if (t.state == READY) n++;
+  return n;
 }
-EXPORT(engine_tex_delete) void engine_tex_delete(int t) { glDeleteTexture(t); }
 
 // ---- posts
 EXPORT(engine_posts_clear) void engine_posts_clear() {
@@ -930,7 +807,7 @@ EXPORT(engine_dblclick) void engine_dblclick(float x, float y) {
   dirty = true;
 }
 
-// ---- one frame. Returns 1 if something is still moving (keep requesting frames).
+// ---- one frame. Returns 0 = nothing drawn, 1 = drawn, 3 = drawn and still animating.
 EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
   if (w != cam.w || h != cam.h || dpr != cam.dpr) { cam.w = w; cam.h = h; cam.dpr = dpr; dirty = true; }
   bool animating = std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
@@ -943,18 +820,14 @@ EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
   dirty = false;
 
   double now = js_now_ms();
-  glViewport(0, 0, cam.w, cam.h);
   RGBA bg = hex(0xf2efe9);
-  glClearColor(bg.r, bg.g, bg.b, 1);
-  glClear(GL_COLOR_BUFFER_BIT);
-  glEnable(GL_BLEND);
-  glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
+  gfx_begin(cam.w, cam.h, bg.r, bg.g, bg.b);
   auto list = collectTiles(now);
   drawBaseMap(list);
   drawPosts();
+  gfx_end();
   evictTiles(now);
-  return animating ? 1 : 0;
+  return animating ? 3 : 1;
 }
 
 // called when a tile finishes loading, an image is ready, etc.
