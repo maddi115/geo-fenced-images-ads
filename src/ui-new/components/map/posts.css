@@ -382,10 +382,24 @@
     box-sizing: border-box;
     width: 100%;
     max-width: none;
-    max-height: 70vh;
+    max-height: 58vh;
     border-radius: 16px 16px 0 0;
-    padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+    padding: 14px 14px calc(12px + env(safe-area-inset-bottom));
+    gap: 8px;
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.12);
   }
+  .composer.collapsed {
+    padding-top: 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+  .composer-title { font-size: 15px; }
+  /* tighter controls on small screens */
+  .kind-tab { padding: 6px 2px; }
+  .kind-sub { font-size: 10px; }
+  .comment-box .composer-input { min-height: 52px; font-size: 16px; } /* 16px stops iOS zooming in */
+  .photo-drop { min-height: 52px; padding: 8px; }
+  .photo-preview { width: 44px; height: 44px; }
+  .composer-footer { display: none; }
   .composer-header::before {
     content: '';
     position: absolute;
@@ -397,7 +411,7 @@
     border-radius: 2px;
     background: #dadce0;
   }
-  .engine-stats { top: 30px; bottom: auto; font-size: 10px; }
+  .engine-stats { top: 30px; bottom: auto; font-size: 10px; padding: 4px 7px; }
   .map-attribution { bottom: auto; top: 4px; right: 4px; font-size: 10px; }
 }
 

@@ -23,7 +23,7 @@ export const MapScreen: Component = () => {
   let canvas!: HTMLCanvasElement;
   let engine: MapEngine | undefined;
   const [stats, setStats] = createSignal<EngineStats | null>(null);
-  const [showStats, setShowStats] = createSignal(true);
+  const [showStats, setShowStats] = createSignal(!window.matchMedia('(max-width: 640px)').matches);
   let statsTimer = 0;
   let recenter: () => void = () => startLocation();
 

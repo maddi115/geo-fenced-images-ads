@@ -363,6 +363,17 @@ struct Camera {
 
 struct Pointer { int id; float x, y, startX, startY; };
 std::vector<Pointer> pointers;
+
+// Momentum ("fling"): after a quick drag the map keeps gliding and slows down,
+// like Google Maps / iOS scrolling.
+struct MoveSample { double t, dx, dy; };
+std::vector<MoveSample> moveSamples;   // recent drag movements (last ~100 ms)
+double inertiaVX = 0, inertiaVY = 0;  // device px per ms
+bool inertia = false;
+double lastFrameMs = 0;
+constexpr double FLING_MIN_SPEED = 0.25;  // px/ms needed to start gliding
+constexpr double FLING_MAX_SPEED = 5.0;   // cap
+constexpr double FLING_DECAY_MS = 325.0;  // time constant of the slow-down
 bool panEnabled = true;
 bool dirty = true;
 double pinchDist = 0, pinchZoom = 0;
@@ -1101,6 +1112,8 @@ EXPORT(engine_pointer_down) void engine_pointer_down(int id, float x, float y) {
   pointers.push_back({id, x, y, x, y});
   cam.targetZoom = cam.zoom; // stop any zoom animation
   cam.flying = false;
+  inertia = false;           // touching the map stops the glide
+  moveSamples.clear();
   if (pointers.size() == 2) {
     pinchDist = std::hypot(pointers[0].x - pointers[1].x, pointers[0].y - pointers[1].y);
     pinchZoom = cam.zoom;
@@ -1119,6 +1132,9 @@ EXPORT(engine_pointer_move) void engine_pointer_move(int id, float x, float y) {
     cam.cy -= dy / wp;
     clampCamera();
     dirty = true;
+    double now = js_now_ms();
+    moveSamples.push_back({now, dx, dy});
+    while (!moveSamples.empty() && now - moveSamples.front().t > 100) moveSamples.erase(moveSamples.begin());
   } else if (pointers.size() == 2 && pinchDist > 0) {
     double d = std::hypot(pointers[0].x - pointers[1].x, pointers[0].y - pointers[1].y);
     double mx = (pointers[0].x + pointers[1].x) / 2, my = (pointers[0].y + pointers[1].y) / 2;
@@ -1140,8 +1156,28 @@ EXPORT(engine_pointer_up) int engine_pointer_up(int id, float x, float y) {
       click = (std::hypot(x - p.startX, y - p.startY) < 5 * cam.dpr && pointers.size() == 1) ? 1 : 0;
     }
   }
+  bool wasSinglePan = pointers.size() == 1 && panEnabled;
   pointers.erase(std::remove_if(pointers.begin(), pointers.end(), [&](auto& p) { return p.id == id; }), pointers.end());
   if (pointers.size() < 2) pinchDist = 0;
+
+  // start gliding if the finger/mouse was still moving fast when released
+  double now = js_now_ms();
+  if (wasSinglePan && !click && moveSamples.size() >= 2 && now - moveSamples.back().t < 50) {
+    double sx = 0, sy = 0;
+    for (auto& m : moveSamples) { sx += m.dx; sy += m.dy; }
+    double span = std::max(16.0, now - moveSamples.front().t);
+    double vx = sx / span, vy = sy / span;
+    double speed = std::hypot(vx, vy);
+    if (speed > FLING_MIN_SPEED) {
+      double k = std::min(1.0, FLING_MAX_SPEED / speed);
+      inertiaVX = vx * k;
+      inertiaVY = vy * k;
+      inertia = true;
+      lastFrameMs = now;
+      dirty = true;
+    }
+  }
+  moveSamples.clear();
   return click;
 }
 
@@ -1159,6 +1195,7 @@ EXPORT(engine_pointer_leave) void engine_pointer_leave() {
 // smooth zoom toward the cursor
 EXPORT(engine_wheel) void engine_wheel(float x, float y, float deltaY) {
   cam.flying = false;
+  inertia = false;
   double step = -deltaY / 300.0;
   step = std::max(-1.0, std::min(1.0, step));
   cam.targetZoom = std::max(MIN_ZOOM, std::min(MAX_ZOOM, cam.targetZoom + step));
@@ -1183,6 +1220,20 @@ EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
     if (std::fabs(focusTarget - focus) < 0.01) focus = focusTarget;
     dirty = true;
   }
+  double nowMs = js_now_ms();
+  if (inertia) {
+    double dt = std::min(50.0, std::max(1.0, nowMs - lastFrameMs));
+    double wp = cam.worldPx();
+    cam.cx -= inertiaVX * dt / wp;
+    cam.cy -= inertiaVY * dt / wp;
+    clampCamera();
+    double decay = std::exp(-dt / FLING_DECAY_MS);
+    inertiaVX *= decay;
+    inertiaVY *= decay;
+    if (std::hypot(inertiaVX, inertiaVY) < 0.02) inertia = false;
+    dirty = true;
+  }
+  lastFrameMs = nowMs;
   if (cam.flying) {
     // smooth fly: ease the center and zoom toward the target together
     cam.cx += (cam.flyX - cam.cx) * 0.15;
@@ -1196,8 +1247,8 @@ EXPORT(engine_frame) int engine_frame(int w, int h, float dpr) {
     }
     dirty = true;
   }
-  bool animating = cam.flying || std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
-  if (animating && !cam.flying) {
+  bool animating = inertia || cam.flying || std::fabs(cam.targetZoom - cam.zoom) > 0.0005;
+  if (std::fabs(cam.targetZoom - cam.zoom) > 0.0005 && !cam.flying) {
     double z = cam.zoom + (cam.targetZoom - cam.zoom) * 0.25;
     if (std::fabs(cam.targetZoom - z) < 0.001) z = cam.targetZoom;
     zoomAround(z, cam.anchorX, cam.anchorY);

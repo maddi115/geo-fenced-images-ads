@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createSignal, createEffect, on } from 'solid-js';
 import {
   draft, posts, message, busy, drawMode, draftAddress, postActions, PRICE_BY_KIND, missingForDraft,
 } from '../../../use-cases/posts/posts-store';
@@ -22,8 +22,18 @@ const Pin = (props: { muted?: boolean }) => (
   </svg>
 );
 
+const isPhone = () => window.matchMedia('(max-width: 640px)').matches;
+
 export const PostComposer: Component = () => {
-  const [collapsed, setCollapsed] = createSignal(false);
+  // phones: start folded so the map has the screen
+  const [collapsed, setCollapsed] = createSignal(isPhone());
+  // phones: fold away while placing / drawing on the map, reopen when done
+  let autoFolded = false;
+  createEffect(on(() => draft.placing || !!drawMode(), (busyOnMap) => {
+    if (!isPhone()) return;
+    if (busyOnMap && !collapsed()) { autoFolded = true; setCollapsed(true); }
+    else if (!busyOnMap && autoFolded) { autoFolded = false; setCollapsed(false); }
+  }, { defer: true }));
   const price = () => PRICE_BY_KIND[draft.kind];
   const count = () => draft.comment.length;
   const counterClass = () =>
@@ -33,8 +43,10 @@ export const PostComposer: Component = () => {
 
   return (
     <div class={`composer ${collapsed() ? 'collapsed' : ''}`}>
-      <button class="composer-header" onClick={() => setCollapsed(!collapsed())} aria-expanded={!collapsed()}>
-        <span class="composer-title">Post on the map</span>
+      <button class="composer-header" onClick={() => { autoFolded = false; setCollapsed(!collapsed()); }} aria-expanded={!collapsed()}>
+        <span class="composer-title">
+          {draft.placing ? 'Tap the map to place it' : drawMode() ? 'Draw your zone on the map' : 'Post on the map'}
+        </span>
         <span class="chevron">{collapsed() ? '▴' : '▾'}</span>
       </button>
 
