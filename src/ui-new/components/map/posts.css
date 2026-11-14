@@ -400,31 +400,20 @@
   .photo-drop { min-height: 52px; padding: 8px; }
   .photo-preview { width: 44px; height: 44px; }
   .composer-footer { display: none; }
-  .composer-header::before {
-    content: '';
-    position: absolute;
-    left: 50%;
-    top: 6px;
-    width: 36px;
-    height: 4px;
-    margin-left: -18px;
-    border-radius: 2px;
-    background: #dadce0;
-  }
+
   .engine-stats { top: 30px; bottom: auto; font-size: 10px; padding: 4px 7px; }
   .map-attribution { bottom: auto; top: 4px; right: 4px; font-size: 10px; }
 }
 
 /* ---------- my location button ---------- */
 .locate-wrap {
-  position: absolute;
-  right: 20px;
-  bottom: 40px;
-  z-index: 1000;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  pointer-events: none;
 }
+.locate-wrap > * { pointer-events: auto; }
 .locate-btn {
   width: 44px;
   height: 44px;
@@ -448,5 +437,7 @@
   border-radius: 8px;
 }
 @media (max-width: 640px) {
-  .locate-wrap { right: 12px; bottom: auto; top: 120px; }
+  /* phones: sits right above the menu bar */
+  .interface-layer { display: flex; flex-direction: column; gap: 10px; }
+  .locate-wrap { order: -1; padding: 0 12px; }
 }

@@ -6,8 +6,25 @@ import type { LatLng } from '../../domain/geo/geo-schemas';
 
 export type LocStatus = 'off' | 'locating' | 'on' | 'denied' | 'insecure' | 'error';
 
+// GPS reading (raw)
 const [myLocation, setMyLocation] = createSignal<{ at: LatLng; accuracy: number } | null>(null);
+// where the blue dot actually is: GPS + the user's drag adjustment (used by "Here")
+const [myAt, setMyAt] = createSignal<LatLng | null>(null);
 const [locStatus, setLocStatus] = createSignal<LocStatus>('off');
+const [locHint, setLocHint] = createSignal('');
+let hintTimer = 0;
+let hintShown = false;
+
+export { myAt, setMyAt, locHint };
+
+/** big accuracy numbers (desktop wifi/IP location) -> tell the user they can drag the dot */
+export function noteAccuracy(accuracyM: number) {
+  if (accuracyM <= 1000 || hintShown) return;
+  hintShown = true;
+  setLocHint(`Your location is approximate (±${(accuracyM / 1000).toFixed(1)} km). Drag the blue dot to where you are.`);
+  clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => setLocHint(''), 7000);
+}
 let watchId: number | null = null;
 
 export { myLocation, locStatus };
@@ -42,7 +59,9 @@ export function stopLocation(clear = true) {
   watchId = null;
   if (clear) {
     setMyLocation(null);
+    setMyAt(null);
     setLocStatus('off');
+    hintShown = false;
   }
 }
 

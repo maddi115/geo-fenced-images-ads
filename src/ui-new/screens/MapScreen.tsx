@@ -1,7 +1,9 @@
 import { Component, onMount, onCleanup, createEffect, createSignal, Show } from 'solid-js';
 import { MapEngine, type EngineStats } from '../../infrastructure/engine/engine';
 import { reportStats } from '../../infrastructure/engine/stats-reporter';
-import { myLocation, locStatus, startLocation, stopLocation, locStatusText } from '../../infrastructure/geo/my-location';
+import {
+  myLocation, locStatus, startLocation, stopLocation, locStatusText, setMyAt, locHint, noteAccuracy,
+} from '../../infrastructure/geo/my-location';
 import { PostComposer } from '../components/panel/PostComposer';
 import { CheckoutModal } from '../components/panel/CheckoutModal';
 import { posts, draft, drawMode, postActions } from '../../use-cases/posts/posts-store';
@@ -28,8 +30,9 @@ export const MapScreen: Component = () => {
   let recenter: () => void = () => startLocation();
 
   onMount(async () => {
-    const e = new MapEngine(canvas, {
+    const e: MapEngine = new MapEngine(canvas, {
       onClick: (at) => postActions.placeAt(at),
+      onMyLocationMoved: () => setMyAt(e.getMyLocation()),
       onHoverZone: (id) => postActions.setHoveredZone(id),
     });
     engine = e;
@@ -70,15 +73,18 @@ export const MapScreen: Component = () => {
     createEffect(() => {
       const loc = myLocation();
       e.setMyLocation(loc?.at ?? null, loc?.accuracy ?? 0);
+      setMyAt(e.getMyLocation()); // GPS + any adjustment the user made by dragging
+      if (loc) noteAccuracy(loc.accuracy);
       if (loc && !flewToMe) {
         flewToMe = true;
-        e.flyTo(loc.at, Math.max(e.zoom, 16));
+        // rough desktop locations: don't zoom in so far that you can't see the area
+        e.flyTo(e.getMyLocation() ?? loc.at, loc.accuracy > 1000 ? 14 : Math.max(e.zoom, 16));
       }
       if (!loc) flewToMe = false;
     });
     recenter = () => {
-      const loc = myLocation();
-      if (loc) e.flyTo(loc.at, Math.max(e.zoom, 16));
+      const at = e.getMyLocation();
+      if (at) e.flyTo(at, Math.max(e.zoom, 15));
       else startLocation();
     };
 
@@ -100,22 +106,21 @@ export const MapScreen: Component = () => {
 
       <div class="interface-layer">
         <PostComposer />
-      </div>
-
       <div class="locate-wrap">
-        <Show when={locStatusText(locStatus())}>
-          <div class="locate-toast">{locStatusText(locStatus())}</div>
-        </Show>
-        <button
-          class={`locate-btn ${locStatus() === 'on' ? 'on' : ''}`}
-          title={locStatus() === 'on' ? 'Center on me (long-press to turn off)' : 'Show my location'}
-          onClick={() => recenter()}
-          onContextMenu={(ev) => { ev.preventDefault(); stopLocation(); }}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 3A8.99 8.99 0 0 0 13 3.06V1h-2v2.06A8.99 8.99 0 0 0 3.06 11H1v2h2.06A8.99 8.99 0 0 0 11 20.94V23h2v-2.06A8.99 8.99 0 0 0 20.94 13H23v-2h-2.06zM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" />
-          </svg>
-        </button>
+          <Show when={locStatusText(locStatus()) || locHint()}>
+            <div class="locate-toast">{locStatusText(locStatus()) || locHint()}</div>
+          </Show>
+          <button
+            class={`locate-btn ${locStatus() === 'on' ? 'on' : ''}`}
+            title={locStatus() === 'on' ? 'Center on me (long-press to turn off)' : 'Show my location'}
+            onClick={() => recenter()}
+            onContextMenu={(ev) => { ev.preventDefault(); stopLocation(); }}
+          >
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+              <path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 3A8.99 8.99 0 0 0 13 3.06V1h-2v2.06A8.99 8.99 0 0 0 3.06 11H1v2h2.06A8.99 8.99 0 0 0 11 20.94V23h2v-2.06A8.99 8.99 0 0 0 20.94 13H23v-2h-2.06zM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14z" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <Show when={stats()}>

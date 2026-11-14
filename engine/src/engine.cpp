@@ -669,9 +669,28 @@ Xform localXform(Merc origin) {
 
 // ---------------------------------------------------------------- my location (blue dot)
 bool hasMyLoc = false;
-Merc myLoc{};
+Merc myLoc{};          // what's shown = GPS reading + the user's adjustment
+Merc myRaw{};          // GPS reading
+double myAdjX = 0, myAdjY = 0; // user's drag adjustment (mercator units)
 double myAccuracyM = 0;
+bool draggingLoc = false;
+constexpr double APPROX_ACCURACY_M = 1000; // worse than this: don't draw the accuracy circle
+
+// how far the user may move their dot away from the GPS reading
+double maxAdjustMerc() {
+  double lng, lat;
+  fromMerc(myRaw, lng, lat);
+  double meters = std::max(150.0, std::min(3000.0, myAccuracyM));
+  return meters / (40075016.686 * std::cos(lat * PI / 180.0));
+}
+void applyAdjust() {
+  double lim = maxAdjustMerc();
+  double len = std::hypot(myAdjX, myAdjY);
+  if (len > lim) { myAdjX *= lim / len; myAdjY *= lim / len; }
+  myLoc = {myRaw.x + myAdjX, myRaw.y + myAdjY};
+}
 Mesh unitCircle; // radius-1 circle, drawn at any size via the scale
+Mesh unitRing;   // radius-1 outline (line width stays in pixels)
 
 void ensureUnitCircle() {
   if (unitCircle.id) return;
@@ -685,6 +704,12 @@ void ensureUnitCircle() {
     if (i > 0) { idx.push_back(0); idx.push_back(uint32_t(i)); idx.push_back(uint32_t(i + 1)); }
   }
   unitCircle = upload(v, 2, &idx);
+  struct P { double x, y; };
+  std::vector<P> ring;
+  for (int i = 0; i < 96; i++) ring.push_back({std::cos(2 * PI * i / 96), std::sin(2 * PI * i / 96)});
+  std::vector<float> lv;
+  buildLine(ring, lv, true);
+  unitRing = upload(lv, 4, nullptr);
 }
 
 void drawCircle(double sx, double sy, double r, RGBA c) {
@@ -700,9 +725,19 @@ void drawMyLocation() {
   fromMerc(myLoc, lng, lat);
   // accuracy circle: meters -> device pixels at this latitude and zoom
   double metersPerWorld = 40075016.686 * std::cos(lat * PI / 180.0);
-  double accPx = myAccuracyM / metersPerWorld * cam.worldPx();
   double dotR = 8 * cam.dpr;
-  if (accPx > dotR * 1.5) drawCircle(sx, sy, accPx, hex(0x4285f4, 0.15f));
+  if (draggingLoc) {
+    // show how far the dot may be moved, around the GPS reading
+    double rx, ry;
+    mercToScreen(myRaw, rx, ry);
+    double limPx = maxAdjustMerc() * cam.worldPx();
+    RGBA c = hex(0x4285f4, 0.7f);
+    gfx_line(unitRing.id, float(rx), float(ry), float(limPx), 2.0f * cam.dpr, c.r, c.g, c.b, c.a);
+  } else if (myAccuracyM <= APPROX_ACCURACY_M) {
+    double accPx = myAccuracyM / metersPerWorld * cam.worldPx();
+    if (accPx > dotR * 1.5) drawCircle(sx, sy, accPx, hex(0x4285f4, 0.15f));
+  }
+  if (draggingLoc) dotR *= 1.25;
   drawCircle(sx, sy, dotR + 4 * cam.dpr, hex(0x000000, 0.12f)); // soft edge
   drawCircle(sx, sy, dotR + 2.5 * cam.dpr, hex(0xffffff));       // white ring
   drawCircle(sx, sy, dotR, hex(0x4285f4));                       // Google blue
@@ -921,8 +956,23 @@ EXPORT(engine_get_zoom) double engine_get_zoom() { return cam.zoom; }
 // blue "you are here" dot. accuracy in meters; pass accuracy < 0 to hide the dot
 EXPORT(engine_set_my_location) void engine_set_my_location(double lng, double lat, double accuracyM) {
   hasMyLoc = accuracyM >= 0;
-  myLoc = toMerc(lng, lat);
-  myAccuracyM = std::max(0.0, accuracyM);
+  if (!hasMyLoc) { myAdjX = myAdjY = 0; draggingLoc = false; dirty = true; return; }
+  myRaw = toMerc(lng, lat);
+  myAccuracyM = accuracyM;
+  applyAdjust(); // keeps the user's adjustment (within the limit)
+  dirty = true;
+}
+
+// the location as shown (GPS + the user's adjustment), as lng,lat
+EXPORT(engine_get_my_location) int engine_get_my_location(double* out) {
+  if (!hasMyLoc) return 0;
+  fromMerc(myLoc, out[0], out[1]);
+  return 1;
+}
+
+EXPORT(engine_reset_my_location_adjust) void engine_reset_my_location_adjust() {
+  myAdjX = myAdjY = 0;
+  applyAdjust();
   dirty = true;
 }
 
@@ -1107,7 +1157,25 @@ EXPORT(engine_set_preview) void engine_set_preview(const double* coords, int n, 
 // ---- input (coordinates in device pixels)
 EXPORT(engine_set_pan) void engine_set_pan(int enabled) { panEnabled = enabled != 0; }
 
+bool hitMyLocation(float x, float y) {
+  if (!hasMyLoc) return false;
+  double sx, sy;
+  mercToScreen(myLoc, sx, sy);
+  return std::hypot(sx - x, sy - y) <= 22 * cam.dpr;
+}
+
+EXPORT(engine_hit_my_location) int engine_hit_my_location(float x, float y) { return hitMyLocation(x, y) ? 1 : 0; }
+
 EXPORT(engine_pointer_down) void engine_pointer_down(int id, float x, float y) {
+  if (pointers.empty() && hitMyLocation(x, y)) {
+    // grab the blue dot to adjust your location (desktop location is often rough)
+    draggingLoc = true;
+    pointers.push_back({id, x, y, x, y});
+    inertia = false;
+    cam.flying = false;
+    dirty = true;
+    return;
+  }
   pointers.erase(std::remove_if(pointers.begin(), pointers.end(), [&](auto& p) { return p.id == id; }), pointers.end());
   pointers.push_back({id, x, y, x, y});
   cam.targetZoom = cam.zoom; // stop any zoom animation
@@ -1126,6 +1194,14 @@ EXPORT(engine_pointer_move) void engine_pointer_move(int id, float x, float y) {
   if (!p) { updateHover(x, y); return; }
   float dx = x - p->x, dy = y - p->y;
   p->x = x; p->y = y;
+  if (draggingLoc) {
+    Merc m = screenToMerc(x, y);
+    myAdjX = m.x - myRaw.x;
+    myAdjY = m.y - myRaw.y;
+    applyAdjust();
+    dirty = true;
+    return;
+  }
   if (pointers.size() == 1 && panEnabled) {
     double wp = cam.worldPx();
     cam.cx -= dx / wp;
@@ -1150,6 +1226,13 @@ EXPORT(engine_pointer_move) void engine_pointer_move(int id, float x, float y) {
 
 // returns 1 if this was a click (pointer barely moved), so the app can place things
 EXPORT(engine_pointer_up) int engine_pointer_up(int id, float x, float y) {
+  if (draggingLoc) {
+    draggingLoc = false;
+    pointers.erase(std::remove_if(pointers.begin(), pointers.end(), [&](auto& p) { return p.id == id; }), pointers.end());
+    dirty = true;
+    js_on_my_location_moved();
+    return 0;
+  }
   int click = 0;
   for (auto& p : pointers) {
     if (p.id == id) {

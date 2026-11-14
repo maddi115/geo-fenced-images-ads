@@ -5,7 +5,7 @@ import {
 import type { PostKind } from '../../../use-cases/posts/post-schemas';
 import { formatPrice } from '../../../infrastructure/payments/checkout';
 import { COMMENT, ICON } from '../../../config-new/constants';
-import { myLocation } from '../../../infrastructure/geo/my-location';
+import { myAt } from '../../../infrastructure/geo/my-location';
 
 const KINDS: { kind: PostKind; title: string; sub: string }[] = [
   { kind: 'pixel', title: 'Red pixel', sub: 'Free' },
@@ -45,7 +45,7 @@ export const PostComposer: Component = () => {
     <div class={`composer ${collapsed() ? 'collapsed' : ''}`}>
       <button class="composer-header" onClick={() => { autoFolded = false; setCollapsed(!collapsed()); }} aria-expanded={!collapsed()}>
         <span class="composer-title">
-          {draft.placing ? 'Tap the map to place it' : drawMode() ? 'Draw your zone on the map' : 'Post on the map'}
+          {draft.placing ? 'Tap the map to place it' : drawMode() ? 'Draw your zone on the map' : collapsed() ? 'Open menu' : 'Close menu'}
         </span>
         <span class="chevron">{collapsed() ? '▴' : '▾'}</span>
       </button>
@@ -141,8 +141,8 @@ export const PostComposer: Component = () => {
             }
           >
             <div class="draw-row">
-              <Show when={myLocation()}>
-                <button class="chip" title="Place it where you are" onClick={() => postActions.placeHere(myLocation()!.at)}>
+              <Show when={myAt()}>
+                <button class="chip" title="Place it where you are" onClick={() => postActions.placeHere(myAt()!)}>
                   Here
                 </button>
               </Show>

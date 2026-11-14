@@ -20,7 +20,7 @@ self.onmessage = async (e: MessageEvent) => {
   if (msg.type === 'init') {
     const instance = await WebAssembly.instantiate(msg.module as WebAssembly.Module, {
       gfx: stubs,
-      env: { request_tile: noop, on_hover: noop, log: noop, now_ms: () => performance.now() },
+      env: { request_tile: noop, on_hover: noop, on_my_location_moved: noop, log: noop, now_ms: () => performance.now() },
       wasi_snapshot_preview1: stubs,
     });
     ex = instance.exports as unknown as Ex;

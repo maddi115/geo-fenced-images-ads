@@ -28,3 +28,4 @@ ENV_IMPORT(request_tile) void js_request_tile(int z, int x, int y);
 ENV_IMPORT(on_hover) void js_on_hover(int postIndex);
 ENV_IMPORT(log) void js_log(const char* msg, int len);
 ENV_IMPORT(now_ms) double js_now_ms();
+ENV_IMPORT(on_my_location_moved) void js_on_my_location_moved();

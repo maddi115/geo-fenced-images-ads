@@ -54,6 +54,9 @@ type Exports = {
   engine_cross_streets_at: (lng: number, lat: number, buf: number, cap: number) => number;
   engine_set_my_location: (lng: number, lat: number, accuracyM: number) => void;
   engine_fly_to: (lng: number, lat: number, zoom: number) => void;
+  engine_get_my_location: (out: number) => number;
+  engine_reset_my_location_adjust: () => void;
+  engine_hit_my_location: (x: number, y: number) => number;
   engine_wheel: (x: number, y: number, dy: number) => void;
   engine_dblclick: (x: number, y: number) => void;
   engine_frame: (w: number, h: number, dpr: number) => number;
@@ -78,6 +81,8 @@ export interface EngineStats {
 
 export interface EngineEvents {
   onClick?: (at: LatLng) => void;
+  /** the user finished dragging their blue dot */
+  onMyLocationMoved?: () => void;
   onHoverZone?: (postId: string | null) => void;
 }
 
@@ -280,6 +285,17 @@ export class MapEngine {
     else this.ex.engine_set_my_location(0, 0, -1);
   }
 
+  /** The location as shown: GPS reading + the user's drag adjustment */
+  getMyLocation(): LatLng | null {
+    if (!this.ex.engine_get_my_location(this.scratch)) return null;
+    const f = new Float64Array(this.ex.memory.buffer, this.scratch, 2);
+    return { lng: f[0], lat: f[1] };
+  }
+
+  resetMyLocationAdjust() {
+    this.ex.engine_reset_my_location_adjust();
+  }
+
   /** Smoothly move the map to a point (zoom optional = keep current zoom) */
   flyTo(at: LatLng, zoom?: number) {
     this.ex.engine_fly_to(at.lng, at.lat, zoom ?? this.zoom);
@@ -364,6 +380,10 @@ export class MapEngine {
     c.addEventListener('pointermove', (e) => {
       const p = pos(e);
       this.ex.engine_pointer_move(e.pointerId, p.x * this.dpr, p.y * this.dpr);
+      // "grab" cursor over your blue dot (it can be dragged to fix your location)
+      if (e.pointerType === 'mouse' && !this.drawKind && !this.placing) {
+        c.style.cursor = this.ex.engine_hit_my_location(p.x * this.dpr, p.y * this.dpr) ? 'grab' : '';
+      }
       if (this.drawKind === 'rect' && this.rectStart) {
         this.setPreview(rect(this.rectStart, this.screenToLngLat(p.x, p.y)), true);
       } else if (this.drawKind === 'poly' && this.drawPts.length) {
@@ -703,6 +723,7 @@ export class MapEngine {
         // look up cross streets after C++ returns from this call
         if (index >= 0) queueMicrotask(() => this.showCrossStreets(index));
       },
+      on_my_location_moved: () => this.events.onMyLocationMoved?.(),
       log: (p: number, l: number) => console.log('[engine]', this.str(p, l)),
       now_ms: () => performance.now(),
     };
