@@ -31,6 +31,8 @@ type Exports = {
   engine_tile_upload: (z: number, x: number, y: number, ptr: number, len: number) => void;
   worker_build_tile: (ptr: number, len: number) => number;
   engine_stat_tiles: () => number;
+  engine_cross_streets: (index: number, buf: number, cap: number) => number;
+  engine_set_hover_info: (index: number, tex: number, w: number, h: number) => void;
   engine_tile_failed: (z: number, x: number, y: number) => void;
   engine_tex_create: (ptr: number, w: number, h: number) => number;
   engine_tex_delete: (t: number) => void;
@@ -55,8 +57,10 @@ interface Tex { tex: number; w: number; h: number }
 export interface EngineStats {
   backend: string;
   workers: number;
-  fps: number;          // frames actually drawn per second
-  frameMs: number;      // average CPU time per drawn frame (C++ + backend)
+  moving: boolean;      // false = nothing changed, so nothing was redrawn (saves battery)
+  fps: number;          // frames drawn per second while moving
+  frameMs: number;      // average time to build + submit one frame (C++ + backend)
+  budgetPct: number;    // share of a 60 fps frame (16.7 ms) that frameMs uses
   tileBuildMs: number;  // average time to decode + triangulate a tile (in workers)
   tiles: number;        // tiles ready on the GPU
 }
@@ -80,7 +84,9 @@ export class MapEngine {
   private buildMsSum = 0;
   private builds = 0;
   private statWindowStart = performance.now();
-  private lastStats: EngineStats = { backend: '', workers: 0, fps: 0, frameMs: 0, tileBuildMs: 0, tiles: 0 };
+  private lastStats: EngineStats = { backend: '', workers: 0, moving: false, fps: 0, frameMs: 0, budgetPct: 0, tileBuildMs: 0, tiles: 0 };
+  private hoverIndex = -1;
+  private textBuf = 0;
   private texCache = new Map<string, Promise<Tex>>();
   private postIds: string[] = [];
   private raf = 0;
@@ -123,6 +129,7 @@ export class MapEngine {
     );
     this.ex.engine_set_view(center[1], center[0], zoom);
     this.scratch = this.ex.engine_alloc(16);
+    this.textBuf = this.ex.engine_alloc(512);
 
     this.bindInput();
     this.startWorkers();
@@ -146,11 +153,15 @@ export class MapEngine {
     const now = performance.now();
     const secs = (now - this.statWindowStart) / 1000;
     if (secs >= 0.5) {
+      const moving = this.drawn >= 5; // a handful of redraws in half a second = something is moving
+      const frameMs = this.drawn ? this.drawMsSum / this.drawn : this.lastStats.frameMs;
       this.lastStats = {
         backend: this.backend?.name ?? '',
         workers: this.workers.length,
-        fps: this.drawn / secs,
-        frameMs: this.drawn ? this.drawMsSum / this.drawn : 0,
+        moving,
+        fps: moving ? this.drawn / secs : this.lastStats.fps,
+        frameMs,
+        budgetPct: (frameMs / (1000 / 60)) * 100,
         tileBuildMs: this.builds ? this.buildMsSum / this.builds : this.lastStats.tileBuildMs,
         tiles: this.ex ? this.ex.engine_stat_tiles() : 0,
       };
@@ -449,6 +460,42 @@ export class MapEngine {
     }
   }
 
+  // ------------------------------------------------------------ cross streets on hover
+  private async showCrossStreets(index: number) {
+    if (index !== this.hoverIndex) return;
+    const n = this.ex.engine_cross_streets(index, this.textBuf, 512);
+    if (n <= 0) return; // -1 = street data still loading (C++ calls on_hover again), 0 = none known
+    const text = new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n));
+    const t = await this.makeInfoTex(text);
+    // C++ owns the texture from here (it deletes it when the hover ends, or right away if
+    // the mouse already moved to another post)
+    this.ex.engine_set_hover_info(index, t.tex, t.w, t.h);
+  }
+
+  // dark bubble with a pin: "📍 Figueroa St & Exposition Blvd"
+  private async makeInfoTex(text: string): Promise<Tex> {
+    const dpr = this.dpr;
+    const label = `📍 ${text}`;
+    const font = `600 ${12 * dpr}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    const meas = document.createElement('canvas').getContext('2d')!;
+    meas.font = font;
+    const padX = 9 * dpr, h = Math.ceil(24 * dpr);
+    const w = Math.ceil(Math.min(320 * dpr, meas.measureText(label).width + padX * 2));
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext('2d')!;
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.92)';
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, h, h / 2);
+    ctx.fill();
+    ctx.fillStyle = '#f9fafb';
+    ctx.font = font;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, padX, h / 2, w - padX * 2);
+    return this.uploadCanvas(cv);
+  }
+
   // ------------------------------------------------------------ textures
   private uploadCanvas(cv: HTMLCanvasElement | OffscreenCanvas): Tex {
     const ctx = cv.getContext('2d') as CanvasRenderingContext2D;
@@ -549,7 +596,12 @@ export class MapEngine {
         this.tileQueue.push([z, x, y]);
         queueMicrotask(() => this.pumpTiles());
       },
-      on_hover: (index: number) => this.events.onHoverZone?.(index >= 0 ? this.postIds[index] ?? null : null),
+      on_hover: (index: number) => {
+        this.hoverIndex = index;
+        this.events.onHoverZone?.(index >= 0 ? this.postIds[index] ?? null : null);
+        // look up cross streets after C++ returns from this call
+        if (index >= 0) queueMicrotask(() => this.showCrossStreets(index));
+      },
       log: (p: number, l: number) => console.log('[engine]', this.str(p, l)),
       now_ms: () => performance.now(),
     };

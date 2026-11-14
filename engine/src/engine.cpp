@@ -218,10 +218,15 @@ struct TileKeyHash {
 };
 
 enum TileState { LOADING, READY, FAILED };
+struct NamedLine {               // a named street, in tile coordinates (for cross streets)
+  std::string name;
+  std::vector<std::pair<float, float>> pts;
+};
 struct Tile {
   TileState state = LOADING;
   uint32_t extent = 4096;
   Mesh buckets[B_COUNT];
+  std::vector<NamedLine> names;
   double lastUsed = 0;
 };
 
@@ -231,13 +236,30 @@ std::unordered_map<TileKey, Tile, TileKeyHash> tiles;
 // This runs inside a background Web Worker (its own copy of this engine), so the
 // main thread never stalls on big city tiles.
 // blob: u32 totalBytes, u32 extent, then per bucket: u32 nFloats, u32 nIdx, f32[nFloats], u32[nIdx]
+//       then street names: u32 nLines, per line: u32 nameLen, name bytes (padded to 4), u32 nPts, f32 x,y...
 std::vector<uint8_t> buildTileBlob(const uint8_t* data, size_t len) {
   std::vector<mvt::Layer> layers = mvt::readTile(data, len);
   std::vector<float> verts[B_COUNT];
   std::vector<uint32_t> idx[B_COUNT];
+  std::vector<NamedLine> names;
   uint32_t extent = 4096;
   for (const auto& l : layers) {
     extent = l.extent ? l.extent : 4096;
+    if (l.name == "transportation_name") {
+      for (const auto& f : l.features) {
+        if (f.type != mvt::LINESTRING) continue;
+        std::string_view n = l.get(f, "name");
+        if (n.empty()) n = l.get(f, "name_en");
+        if (n.empty()) continue;
+        for (auto& r : mvt::decodeGeometry(f)) {
+          if (r.size() < 2) continue;
+          NamedLine nl{std::string(n), {}};
+          for (auto& pt : r) nl.pts.push_back({float(pt.x), float(pt.y)});
+          names.push_back(std::move(nl));
+        }
+      }
+      continue;
+    }
     for (const auto& f : l.features) {
       int b = bucketFor(l, f);
       if (b < 0) continue;
@@ -249,8 +271,11 @@ std::vector<uint8_t> buildTileBlob(const uint8_t* data, size_t len) {
       }
     }
   }
+  auto pad4 = [](size_t n) { return (n + 3) & ~size_t(3); };
   size_t total = 8;
   for (int b = 0; b < B_COUNT; b++) total += 8 + verts[b].size() * 4 + idx[b].size() * 4;
+  total += 4;
+  for (auto& nl : names) total += 8 + pad4(nl.name.size()) + nl.pts.size() * 8;
   std::vector<uint8_t> out(total);
   uint8_t* w = out.data();
   auto put32 = [&](uint32_t v) { std::memcpy(w, &v, 4); w += 4; };
@@ -261,6 +286,14 @@ std::vector<uint8_t> buildTileBlob(const uint8_t* data, size_t len) {
     put32(uint32_t(idx[b].size()));
     std::memcpy(w, verts[b].data(), verts[b].size() * 4); w += verts[b].size() * 4;
     std::memcpy(w, idx[b].data(), idx[b].size() * 4); w += idx[b].size() * 4;
+  }
+  put32(uint32_t(names.size()));
+  for (auto& nl : names) {
+    put32(uint32_t(nl.name.size()));
+    std::memcpy(w, nl.name.data(), nl.name.size());
+    w += pad4(nl.name.size());
+    put32(uint32_t(nl.pts.size()));
+    for (auto& pt : nl.pts) { std::memcpy(w, &pt.first, 4); std::memcpy(w + 4, &pt.second, 4); w += 8; }
   }
   return out;
 }
@@ -282,6 +315,22 @@ void uploadTileBlob(Tile& t, const uint8_t* blob, size_t len) {
     if (!nf) continue;
     int fpv = STYLES[b].kind == FILL ? 2 : 4;
     t.buckets[b].id = gfx_mesh_create(v, int(nf), fpv, ni ? ix : nullptr, int(ni));
+  }
+  // street names
+  uint32_t nLines = r + 4 <= end ? get32() : 0;
+  for (uint32_t i = 0; i < nLines && r < end; i++) {
+    uint32_t nl = get32();
+    if (r + nl > end) break;
+    NamedLine line{std::string(reinterpret_cast<const char*>(r), nl), {}};
+    r += (nl + 3) & ~3u;
+    uint32_t np = get32();
+    if (r + size_t(np) * 8 > end) break;
+    for (uint32_t k = 0; k < np; k++) {
+      float x, y;
+      std::memcpy(&x, r, 4); std::memcpy(&y, r + 4, 4); r += 8;
+      line.pts.push_back({x, y});
+    }
+    t.names.push_back(std::move(line));
   }
   t.state = READY;
 }
@@ -391,18 +440,145 @@ bool pointInRing(const std::vector<Merc>& r, Merc p) {
   return inside;
 }
 
+// hover info bubble (cross streets), texture made by JS
+int hoverInfoTex = 0, hoverInfoW = 0, hoverInfoH = 0;
+bool hoverInfoPending = false;
+
+void clearHoverInfo() {
+  if (hoverInfoTex) gfx_tex_delete(hoverInfoTex);
+  hoverInfoTex = hoverInfoW = hoverInfoH = 0;
+  hoverInfoPending = false;
+}
+
+double iconSizePx();
+
+// which post is under the mouse? pixels and icons sit on top of zones
 void updateHover(float sx, float sy) {
   Merc m = screenToMerc(sx, sy);
   int found = -1;
-  for (int i = int(posts.size()) - 1; i >= 0; i--) {
+  for (int i = int(posts.size()) - 1; i >= 0 && found < 0; i--) {
     const Post& p = posts[i];
-    if (p.kind == P_ZONE && !p.draft && pointInRing(p.ring, m)) { found = i; break; }
+    if (p.draft || p.kind == P_ZONE) continue;
+    double px, py;
+    mercToScreen(p.at, px, py);
+    if (p.kind == P_PIXEL) {
+      double r = (cfg.pixelSize / 2 + 5) * cam.dpr;
+      if (std::fabs(sx - px) <= r && std::fabs(sy - py) <= r) found = i;
+    } else {
+      double s = iconSizePx();
+      double maxDim = std::max(p.tw, p.th);
+      double w = maxDim ? s * p.tw / maxDim : s, h = maxDim ? s * p.th / maxDim : s;
+      if (std::fabs(sx - px) <= w / 2 && std::fabs(sy - py) <= h / 2) found = i;
+    }
+  }
+  for (int i = int(posts.size()) - 1; i >= 0 && found < 0; i--) {
+    const Post& p = posts[i];
+    if (p.kind == P_ZONE && !p.draft && pointInRing(p.ring, m)) found = i;
   }
   if (found != hovered) {
     hovered = found;
+    clearHoverInfo();
     dirty = true;
     js_on_hover(found);
   }
+}
+
+// ---------------------------------------------------------------- cross streets
+// Finds the nearest intersection of two differently named streets around a point,
+// using street names from z14 vector tiles. Returns false while the tile is still loading.
+constexpr int NAME_Z = 14;
+constexpr double SEARCH_METERS = 500;
+
+struct Seg { double ax, ay, bx, by; const std::string* name; };
+
+double distPointSeg(double px, double py, const Seg& s) {
+  double dx = s.bx - s.ax, dy = s.by - s.ay;
+  double l2 = dx * dx + dy * dy;
+  double t = l2 > 0 ? std::max(0.0, std::min(1.0, ((px - s.ax) * dx + (py - s.ay) * dy) / l2)) : 0;
+  double qx = s.ax + t * dx - px, qy = s.ay + t * dy - py;
+  return std::sqrt(qx * qx + qy * qy);
+}
+
+bool segIntersect(const Seg& a, const Seg& b, double& ix, double& iy) {
+  double d1x = a.bx - a.ax, d1y = a.by - a.ay, d2x = b.bx - b.ax, d2y = b.by - b.ay;
+  double den = d1x * d2y - d1y * d2x;
+  if (std::fabs(den) < 1e-18) return false;
+  double t = ((b.ax - a.ax) * d2y - (b.ay - a.ay) * d2x) / den;
+  double u = ((b.ax - a.ax) * d1y - (b.ay - a.ay) * d1x) / den;
+  // small tolerance: streets often meet exactly at an endpoint
+  if (t < -0.02 || t > 1.02 || u < -0.02 || u > 1.02) return false;
+  ix = a.ax + t * d1x;
+  iy = a.ay + t * d1y;
+  return true;
+}
+
+bool crossStreets(Merc p, std::string& out) {
+  out.clear();
+  int n = 1 << NAME_Z;
+  int tx = std::max(0, std::min(n - 1, int(p.x * n))), ty = std::max(0, std::min(n - 1, int(p.y * n)));
+  TileKey center{NAME_Z, tx, ty};
+  auto it = tiles.find(center);
+  if (it == tiles.end()) {
+    tiles[center] = Tile{};
+    tiles[center].lastUsed = js_now_ms();
+    js_request_tile(center.z, center.x, center.y);
+    return false;
+  }
+  if (it->second.state == LOADING) return false;
+
+  double lng, lat;
+  fromMerc(p, lng, lat);
+  double radius = SEARCH_METERS / (40075016.686 * std::cos(lat * PI / 180.0)); // meters -> mercator units
+
+  std::vector<Seg> segs;
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      auto t = tiles.find(TileKey{NAME_Z, tx + dx, ty + dy});
+      if (t == tiles.end() || t->second.state != READY) continue;
+      double scale = 1.0 / (double(n) * t->second.extent);
+      double ox = double(tx + dx) / n, oy = double(ty + dy) / n;
+      for (const auto& nl : t->second.names) {
+        for (size_t k = 0; k + 1 < nl.pts.size(); k++) {
+          Seg sg{ox + nl.pts[k].first * scale, oy + nl.pts[k].second * scale,
+                 ox + nl.pts[k + 1].first * scale, oy + nl.pts[k + 1].second * scale, &nl.name};
+          if (distPointSeg(p.x, p.y, sg) <= radius) segs.push_back(sg);
+        }
+      }
+    }
+  }
+  if (segs.empty()) return true;
+
+  double best = 1e9;
+  const std::string *a = nullptr, *b = nullptr;
+  for (size_t i = 0; i < segs.size(); i++) {
+    for (size_t j = i + 1; j < segs.size(); j++) {
+      if (*segs[i].name == *segs[j].name) continue;
+      double ix, iy;
+      if (!segIntersect(segs[i], segs[j], ix, iy)) continue;
+      double d = std::hypot(ix - p.x, iy - p.y);
+      if (d < best) { best = d; a = segs[i].name; b = segs[j].name; }
+    }
+  }
+  if (a && b) {
+    // nearest street first
+    double da = 1e9, db = 1e9;
+    for (auto& sg : segs) {
+      double d = distPointSeg(p.x, p.y, sg);
+      if (sg.name == a || *sg.name == *a) da = std::min(da, d);
+      if (sg.name == b || *sg.name == *b) db = std::min(db, d);
+    }
+    out = da <= db ? *a + " & " + *b : *b + " & " + *a;
+    return true;
+  }
+  // no intersection nearby: name the closest street
+  double nd = 1e9;
+  const std::string* nearest = nullptr;
+  for (auto& sg : segs) {
+    double d = distPointSeg(p.x, p.y, sg);
+    if (d < nd) { nd = d; nearest = sg.name; }
+  }
+  if (nearest) out = "on " + *nearest;
+  return true;
 }
 
 void drawQuad(int tex, double x, double y, double w, double h, float alpha) {
@@ -482,6 +658,26 @@ void drawPosts() {
         drawLabel(p, sx, sy);
       }
     }
+  }
+
+  if (hovered >= 0 && hovered < int(posts.size()) && hoverInfoTex) {
+    const Post& p = posts[hovered];
+    double sx, sy, below = 0;
+    double gap = cfg.labelGap * cam.dpr;
+    if (p.kind == P_PIXEL) {
+      mercToScreen(p.at, sx, sy);
+      below = sy + cfg.pixelSize * cam.dpr / 2 + gap;
+    } else if (p.kind == P_ICON) {
+      mercToScreen(p.at, sx, sy);
+      double s = iconSizePx();
+      double maxDim = std::max(p.tw, p.th);
+      double h = maxDim ? s * p.th / maxDim : s;
+      below = sy + h / 2 + gap;
+    } else {
+      mercToScreen(p.center, sx, sy);
+      below = sy + (p.thumbTex ? p.thh / 2.0 : 0) + gap;
+    }
+    drawQuad(hoverInfoTex, std::round(sx - hoverInfoW / 2.0), std::round(below), hoverInfoW, hoverInfoH, 1.f);
   }
 
   if (previewLine.id) {
@@ -628,10 +824,37 @@ EXPORT(engine_tile_upload) void engine_tile_upload(int z, int x, int y, const ui
   if (it == tiles.end()) return; // evicted while loading
   uploadTileBlob(it->second, blob, size_t(len));
   dirty = true;
+  // the street names the hover bubble was waiting for may have just arrived
+  if (z == NAME_Z && hoverInfoPending && hovered >= 0) { hoverInfoPending = false; js_on_hover(hovered); }
 }
 EXPORT(engine_tile_failed) void engine_tile_failed(int z, int x, int y) {
   auto it = tiles.find(TileKey{z, x, y});
   if (it != tiles.end()) it->second.state = FAILED;
+  if (z == NAME_Z && hoverInfoPending && hovered >= 0) { hoverInfoPending = false; js_on_hover(hovered); }
+}
+
+// Cross streets for a post, written as UTF-8 into buf. Returns the length,
+// 0 if no streets are known there, or -1 while the street data is still loading
+// (the engine calls on_hover again when it arrives).
+EXPORT(engine_cross_streets) int engine_cross_streets(int index, char* buf, int cap) {
+  if (index < 0 || index >= int(posts.size())) return 0;
+  const Post& p = posts[index];
+  std::string out;
+  if (!crossStreets(p.kind == P_ZONE ? p.center : p.at, out)) {
+    if (index == hovered) hoverInfoPending = true;
+    return -1;
+  }
+  int n = std::min(int(out.size()), cap);
+  std::memcpy(buf, out.data(), size_t(n));
+  return n;
+}
+
+// texture with the cross-street text for the currently hovered post
+EXPORT(engine_set_hover_info) void engine_set_hover_info(int index, int tex, int w, int h) {
+  if (index != hovered) { if (tex) gfx_tex_delete(tex); return; }
+  if (hoverInfoTex && hoverInfoTex != tex) gfx_tex_delete(hoverInfoTex);
+  hoverInfoTex = tex; hoverInfoW = w; hoverInfoH = h;
+  dirty = true;
 }
 
 // ---- textures (RGBA, not premultiplied)
@@ -649,6 +872,7 @@ EXPORT(engine_stat_tiles) int engine_stat_tiles() {
 EXPORT(engine_posts_clear) void engine_posts_clear() {
   for (auto& p : posts) destroyPost(p);
   posts.clear();
+  clearHoverInfo();
   if (hovered != -1) { hovered = -1; js_on_hover(-1); }
   dirty = true;
 }
@@ -789,7 +1013,7 @@ EXPORT(engine_pointer_up) int engine_pointer_up(int id, float x, float y) {
 }
 
 EXPORT(engine_pointer_leave) void engine_pointer_leave() {
-  if (hovered != -1) { hovered = -1; dirty = true; js_on_hover(-1); }
+  if (hovered != -1) { hovered = -1; clearHoverInfo(); dirty = true; js_on_hover(-1); }
 }
 
 // smooth zoom toward the cursor

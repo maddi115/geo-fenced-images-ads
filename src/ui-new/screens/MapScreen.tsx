@@ -68,7 +68,15 @@ export const MapScreen: Component = () => {
           <div class="engine-stats" onClick={() => setShowStats(!showStats())} title="Click to hide/show">
             <Show when={showStats()} fallback={<span>stats</span>}>
               <div><b>{st().backend}</b> · C++ engine</div>
-              <div>{st().fps.toFixed(0)} fps · {st().frameMs.toFixed(2)} ms/frame</div>
+              <Show
+                when={st().moving}
+                fallback={<div>idle · redraws only when something moves</div>}
+              >
+                <div>{st().fps.toFixed(0)} fps while moving</div>
+              </Show>
+              <div>
+                frame: {st().frameMs.toFixed(2)} ms = {st().budgetPct.toFixed(1)}% of the 16.7 ms budget
+              </div>
               <div>tiles: {st().tiles} · build {st().tileBuildMs.toFixed(1)} ms · {st().workers} workers</div>
             </Show>
           </div>
