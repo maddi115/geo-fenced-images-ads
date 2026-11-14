@@ -82,12 +82,14 @@ export class LeafletAdapter implements MapAdapter {
 
       // NOW attach hover listeners if callbacks were registered
       if (this.hoverCallback) {
-        this.currentLayer.on('mouseover', this.hoverCallback);
+        const layer = this.currentLayer!;
+        layer.on('mouseover', this.hoverCallback);
         console.log('🖱️ Hover listener attached to fence');
       }
       
       if (this.unhoverCallback) {
-        this.currentLayer.on('mouseout', (e: any) => {
+        const layer2 = this.currentLayer!;
+        layer2.on('mouseout', (e: any) => {
           this.unhoverCallback!(e.originalEvent?.relatedTarget);
         });
         console.log('🖱️ Unhover listener attached to fence');
