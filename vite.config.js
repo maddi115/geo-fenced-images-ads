@@ -16,6 +16,18 @@ function engineStatsToTerminal() {
           res.end();
         });
       });
+      // other dev lines: [jxl stats], [post stats]
+      server.middlewares.use('/__dev-log', (req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          const tag = new URL(req.url, 'http://x').searchParams.get('tag') || 'dev';
+          const time = new Date().toLocaleTimeString();
+          console.log(`\x1b[35m[${tag} ${time}]\x1b[0m ${body}`);
+          res.statusCode = 204;
+          res.end();
+        });
+      });
     },
   };
 }

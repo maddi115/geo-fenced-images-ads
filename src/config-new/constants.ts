@@ -57,3 +57,28 @@ export const PRICES = {
   icon: 300, // $3.00
   zone: 500, // $5.00
 } as const;
+
+// How long each post stays on the map. This is locked inside the post's signature,
+// so nobody can make a post last longer.
+const HOUR = 60 * 60 * 1000;
+export const LIFETIME_MS = {
+  pixel: 24 * HOUR, // free red pixel: 24 hours
+  icon: 4 * 24 * HOUR, // $3 icon: 4 days
+  zone: 7 * 24 * HOUR, // $5 zone image: 7 days
+} as const;
+
+export const LIFETIME_LABEL = { pixel: '24h', icon: '4 days', zone: '7 days' } as const;
+
+// Spam protection
+export const TRUST = {
+  WORK_BITS: 18, // anti-spam puzzle: about 1 second on a PC, a few seconds on a phone
+  MAX_POSTS_PER_MINUTE: 10, // per person (per signing key)
+  MAX_FUTURE_MS: 5 * 60 * 1000, // posts dated more than 5 minutes ahead are dropped
+} as const;
+
+// Username + profile picture
+export const PROFILE = {
+  NAME_MAX_LETTERS: 5,
+  AVATAR_PX: 64,
+  AVATAR_MAX_CHARS: 12000, // the picture travels inside every post, so it stays tiny
+} as const;

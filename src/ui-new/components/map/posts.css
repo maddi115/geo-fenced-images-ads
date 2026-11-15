@@ -552,3 +552,42 @@
   .pick-bar { bottom: calc(16px + env(safe-area-inset-bottom)); width: calc(100% - 24px); justify-content: space-between; }
   .pick-btn.primary { flex: 1; }
 }
+
+/* ---------- your username + profile picture ---------- */
+.profile-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 2px 0 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid #f1f3f4;
+}
+.avatar-btn {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  cursor: pointer;
+  background: #1a73e8;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px #dadce0;
+}
+.avatar-btn img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.avatar-letter { color: #fff; font-weight: 700; font-size: 14px; }
+.profile-name { font-weight: 600; font-size: 14px; color: #202124; }
+.name-input {
+  width: 84px;
+  font: inherit;
+  font-size: 14px;
+  padding: 5px 8px;
+  border: 1px solid #1a73e8;
+  border-radius: 8px;
+  outline: none;
+  box-sizing: border-box;
+}
+.profile-error { flex-basis: 100%; color: #d93025; font-size: 12px; }

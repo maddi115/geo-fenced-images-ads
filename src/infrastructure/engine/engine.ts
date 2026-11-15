@@ -6,7 +6,7 @@
 //   * turns images and comment text into pixel buffers for C++ to send to the GPU
 //   * forwards mouse / touch / wheel input to C++ (camera logic lives in C++)
 
-import type { Post } from '../../use-cases/posts/post-schemas';
+import type { Author, PostKind } from '../../use-cases/posts/post-schemas';
 import type { Draft } from '../../use-cases/posts/posts-store';
 import type { LatLng } from '../../domain/geo/geo-schemas';
 import { ICON, MARKER, PIXEL, ZONE, ZOOM } from '../../config-new/constants';
@@ -14,6 +14,7 @@ import type { GfxBackend } from './backends/backend';
 import { WebGPUBackend } from './backends/webgpu';
 import { WebGL2Backend } from './backends/webgl2';
 import { decodeToBitmap } from '../images/jxl';
+import { avatarColor } from '../identity/profile';
 
 const FONT_FAMILY = '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 const TEXT_PX = 14;
@@ -109,7 +110,7 @@ export class MapEngine {
   private textBuf = 0;
   private texCache = new Map<string, Promise<Tex>>();
   private postIds: string[] = [];
-  private postInfo: { comment: string; imageUrl: string | null }[] = [];
+  private postInfo: PostInfo[] = [];
   private placing = false;
   private raf = 0;
   private dpr = 1;
@@ -236,9 +237,9 @@ export class MapEngine {
   }
 
   /** Re-send all posts + the draft to C++ */
-  async setPosts(posts: readonly Post[], draft: Draft) {
+  async setPosts(posts: readonly EnginePost[], draft: Draft) {
     const version = ++this.updateVersion;
-    const list: (Post & { draft?: boolean })[] = posts.map((p) => ({ ...p }));
+    const list: (EnginePost & { draft?: boolean })[] = posts.map((p) => ({ ...p }));
     const d = draftToPost(draft);
     if (d) list.push({ ...d, draft: true });
 
@@ -246,7 +247,7 @@ export class MapEngine {
     const prepared = await Promise.all(
       list.map(async (p) => {
         const label = p.comment.trim() ? await this.labelTex(p.comment.trim(), !!p.draft) : null;
-        const image = 'imageUrl' in p && p.imageUrl ? await this.imageTex(p.imageUrl) : null;
+        const image = p.imageUrl ? await this.imageTex(p.imageUrl) : null;
         const thumb = p.kind === 'zone' && p.imageUrl ? await this.thumbTex(p.imageUrl) : null;
         return { p, label, image, thumb };
       })
@@ -261,12 +262,11 @@ export class MapEngine {
       const a = p.draft ? 0.75 : 1;
       const L = label ?? { tex: 0, w: 0, h: 0 };
       let index = -1;
-      if (p.kind === 'pixel' || (p.kind === 'icon' && !image)) {
-        const at = (p as any).at as LatLng;
-        index = ex.engine_add_pixel(at.lng, at.lat, L.tex, L.w, L.h, a);
-      } else if (p.kind === 'icon' && image) {
+      if ((p.kind === 'pixel' || (p.kind === 'icon' && !image)) && p.at) {
+        index = ex.engine_add_pixel(p.at.lng, p.at.lat, L.tex, L.w, L.h, a);
+      } else if (p.kind === 'icon' && image && p.at) {
         index = ex.engine_add_icon(p.at.lng, p.at.lat, image.tex, image.w, image.h, L.tex, L.w, L.h, a);
-      } else if (p.kind === 'zone') {
+      } else if (p.kind === 'zone' && p.coordinates) {
         const n = p.coordinates.length;
         const ptr = ex.engine_alloc(n * 16);
         const f = new Float64Array(ex.memory.buffer, ptr, n * 2);
@@ -277,7 +277,13 @@ export class MapEngine {
       }
       if (index >= 0) {
         this.postIds[index] = p.id;
-        this.postInfo[index] = { comment: p.comment.trim(), imageUrl: 'imageUrl' in p && p.imageUrl ? p.imageUrl : null };
+        this.postInfo[index] = {
+          comment: p.comment.trim(),
+          imageUrl: p.imageUrl || null,
+          author: p.author ?? null,
+          createdAt: p.createdAt ?? 0,
+          expiresAt: p.expiresAt ?? 0,
+        };
       }
     }
   }
@@ -562,30 +568,37 @@ export class MapEngine {
     const address = n > 0
       ? new TextDecoder().decode(new Uint8Array(this.ex.memory.buffer, this.textBuf, n))
       : n < 0 ? null : '';
-    const t = await this.makePostCard(info.comment, info.imageUrl, address);
+    const t = await this.makePostCard(info, address);
     if (index !== this.hoverIndex) { this.ex.engine_tex_delete(t.tex); return; }
     // C++ owns the texture from here (deletes it when the card closes)
     this.ex.engine_set_hover_info(index, t.tex, t.w, t.h);
   }
 
-  private async makePostCard(comment: string, imageUrl: string | null, address: string | null): Promise<Tex> {
+  private async makePostCard(info: PostInfo, address: string | null): Promise<Tex> {
+    const { comment, imageUrl, author } = info;
     const dpr = this.dpr;
     const W = 280 * dpr;                 // card width
     const pad = 12 * dpr;
     const img = imageUrl ? await loadImage(imageUrl).catch(() => null) : null;
+    const face = author?.avatar ? await loadImage(author.avatar).catch(() => null) : null;
     const thumb = img ? 64 * dpr : 0;
     const textX = pad + (thumb ? thumb + 12 * dpr : 0);
     const textW = W - textX - pad;
 
     const titleFont = `600 ${15 * dpr}px ${FONT_FAMILY}`;
     const addrFont = `500 ${13 * dpr}px ${FONT_FAMILY}`;
+    const nameFont = `600 ${12.5 * dpr}px ${FONT_FAMILY}`;
+    const timeFont = `500 ${12 * dpr}px ${FONT_FAMILY}`;
     const meas = document.createElement('canvas').getContext('2d')!;
     meas.font = titleFont;
     const title = comment || 'Pinned spot';
     const lines = wrap(meas, title, textW).slice(0, 3);
     const titleLH = Math.round(20 * dpr);
     const addrLH = Math.round(18 * dpr);
-    const textH = lines.length * titleLH + 6 * dpr + addrLH;
+    const nameLH = author ? Math.round(22 * dpr) : 0;
+    const timeLH = info.createdAt ? Math.round(17 * dpr) : 0;
+    const gap = 6 * dpr;
+    const textH = nameLH + (nameLH ? 4 * dpr : 0) + lines.length * titleLH + gap + addrLH + (timeLH ? 2 * dpr + timeLH : 0);
     const bodyH = Math.max(thumb, textH) + pad * 2;
     const arrow = 8 * dpr;
 
@@ -618,11 +631,38 @@ export class MapEngine {
     }
 
     let y = m + (bodyH - textH) / 2;
+    ctx.textBaseline = 'middle';
+
+    // who posted it: profile picture + username
+    if (author) {
+      const r = 10 * dpr, cx = m + textX + r, cy = y + nameLH / 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.clip();
+      if (face) {
+        const sc = Math.max((r * 2) / face.width, (r * 2) / face.height);
+        ctx.drawImage(face, cx - (face.width * sc) / 2, cy - (face.height * sc) / 2, face.width * sc, face.height * sc);
+      } else {
+        ctx.fillStyle = avatarColor(author.key);
+        ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+        ctx.fillStyle = '#fff';
+        ctx.font = `700 ${11 * dpr}px ${FONT_FAMILY}`;
+        ctx.textAlign = 'center';
+        ctx.fillText(author.name.charAt(0).toUpperCase(), cx, cy + 0.5 * dpr);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+      ctx.font = nameFont;
+      ctx.fillStyle = '#3c4043';
+      ctx.fillText(author.name, m + textX + r * 2 + 7 * dpr, cy, textW - r * 2 - 7 * dpr);
+      y += nameLH + 4 * dpr;
+    }
+
     ctx.fillStyle = '#202124';
     ctx.font = titleFont;
-    ctx.textBaseline = 'middle';
     lines.forEach((l, i) => ctx.fillText(l, m + textX, y + titleLH * (i + 0.5), textW));
-    y += lines.length * titleLH + 6 * dpr;
+    y += lines.length * titleLH + gap;
 
     // address row: red pin + cross streets
     const px = m + textX + 5 * dpr, py = y + addrLH / 2 - 1 * dpr, r = 4.5 * dpr;
@@ -640,6 +680,14 @@ export class MapEngine {
     ctx.fillStyle = '#5f6368';
     const addrText = address === null ? 'Finding cross streets…' : address || 'No street names here';
     ctx.fillText(addrText, m + textX + 16 * dpr, y + addrLH / 2, textW - 16 * dpr);
+    y += addrLH + 2 * dpr;
+
+    // when: "Posted 3:42 PM · 2h ago · 22h left"
+    if (timeLH) {
+      ctx.font = timeFont;
+      ctx.fillStyle = '#80868b';
+      ctx.fillText(timeLine(info.createdAt, info.expiresAt), m + textX, y + timeLH / 2, textW);
+    }
 
     return this.uploadCanvas(cv);
   }
@@ -773,13 +821,56 @@ function rect(a: LatLng, b: LatLng): LatLng[] {
   return [{ lat: n, lng: w }, { lat: n, lng: e }, { lat: s, lng: e }, { lat: s, lng: w }];
 }
 
-function draftToPost(d: Draft): Post | null {
-  const base = { id: 'draft', comment: d.comment, createdAt: '' };
-  if (d.kind === 'pixel' && d.at) return { ...base, kind: 'pixel', at: d.at };
-  if (d.kind === 'icon' && d.at) return { ...base, kind: 'icon', at: d.at, imageUrl: d.imageUrl ?? '', paymentId: '' };
-  if (d.kind === 'zone' && d.coordinates)
-    return { ...base, kind: 'zone', coordinates: d.coordinates, imageUrl: d.imageUrl ?? '', paymentId: '' };
+/** What the engine needs from a post (saved posts and the draft) */
+export interface EnginePost {
+  id: string;
+  kind: PostKind;
+  comment: string;
+  at?: LatLng;
+  coordinates?: LatLng[];
+  imageUrl?: string;
+  author?: Author;
+  createdAt?: number;
+  expiresAt?: number;
+}
+
+interface PostInfo {
+  comment: string;
+  imageUrl: string | null;
+  author: Author | null;
+  createdAt: number;
+  expiresAt: number;
+}
+
+function draftToPost(d: Draft): EnginePost | null {
+  const base = { id: 'draft', comment: d.comment, imageUrl: d.imageUrl ?? undefined };
+  if (d.kind !== 'zone' && d.at) return { ...base, kind: d.kind, at: d.at };
+  if (d.kind === 'zone' && d.coordinates) return { ...base, kind: 'zone', coordinates: d.coordinates };
   return null;
+}
+
+// "Posted 3:42 PM · 2h ago · 22h left" (older than a day also shows the day)
+function timeLine(createdAt: number, expiresAt: number, now = Date.now()) {
+  const d = new Date(createdAt);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const day = now - createdAt > 20 * 3600e3 ? `${d.toLocaleDateString([], { weekday: 'short' })} ` : '';
+  return `Posted ${day}${time} · ${ago(now - createdAt)} · ${left(expiresAt - now)}`;
+}
+function ago(ms: number) {
+  const min = Math.floor(ms / 60e3);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+function left(ms: number) {
+  const min = Math.max(0, Math.floor(ms / 60e3));
+  if (min < 60) return `${min}m left`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h left`;
+  const d = Math.floor(h / 24);
+  return h % 24 ? `${d}d ${h % 24}h left` : `${d}d left`;
 }
 
 const imageCache = new Map<string, Promise<ImageBitmap>>();

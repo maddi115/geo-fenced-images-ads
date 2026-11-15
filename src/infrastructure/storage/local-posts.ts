@@ -1,22 +1,20 @@
-import { z } from 'zod';
-import { PostSchema, type Post } from '../../use-cases/posts/post-schemas';
+import type { Post } from '../../use-cases/posts/post-schemas';
 
-// Saves posts in this browser only (localStorage).
-// Swap this file for a real backend later so everyone sees the same map.
-const KEY = 'geofence-studio:posts:v1';
+// Saves posts in this browser (localStorage). Every post is checked again when loaded
+// (signature, puzzle, expiry), so an edited or expired post is dropped.
+// v2: posts are signed now. Old unsigned test posts (v1) are not loaded.
+const KEY = 'geofence-studio:posts:v2';
 
-export function loadPosts(): Post[] {
+export function loadRawPosts(): unknown[] {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = z.array(PostSchema).safeParse(JSON.parse(raw));
-    return parsed.success ? parsed.data : [];
+    const raw = JSON.parse(localStorage.getItem(KEY) || '[]');
+    return Array.isArray(raw) ? raw : [];
   } catch {
     return [];
   }
 }
 
-export function savePosts(posts: Post[]): boolean {
+export function savePosts(posts: readonly Post[]): boolean {
   try {
     localStorage.setItem(KEY, JSON.stringify(posts));
     return true;

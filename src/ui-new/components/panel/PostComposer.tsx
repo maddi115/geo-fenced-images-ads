@@ -4,13 +4,76 @@ import {
 } from '../../../use-cases/posts/posts-store';
 import type { PostKind } from '../../../use-cases/posts/post-schemas';
 import { formatPrice } from '../../../infrastructure/payments/checkout';
-import { COMMENT, ICON } from '../../../config-new/constants';
+import { COMMENT, LIFETIME_LABEL, PROFILE } from '../../../config-new/constants';
+import { username, avatar, setName, setAvatarFile, removeAvatar, shortName, avatarColor } from '../../../infrastructure/identity/profile';
+import { getMyKeys } from '../../../infrastructure/identity/keys';
 
 const KINDS: { kind: PostKind; title: string; sub: string }[] = [
-  { kind: 'pixel', title: 'Red pixel', sub: 'Free' },
-  { kind: 'icon', title: 'Custom icon', sub: `${ICON.SIZE}px · ${formatPrice(PRICE_BY_KIND.icon)}` },
-  { kind: 'zone', title: 'Zone image', sub: `Draw area · ${formatPrice(PRICE_BY_KIND.zone)}` },
+  { kind: 'pixel', title: 'Red pixel', sub: `Free · ${LIFETIME_LABEL.pixel}` },
+  { kind: 'icon', title: 'Custom icon', sub: `${formatPrice(PRICE_BY_KIND.icon)} · ${LIFETIME_LABEL.icon}` },
+  { kind: 'zone', title: 'Zone image', sub: `${formatPrice(PRICE_BY_KIND.zone)} · ${LIFETIME_LABEL.zone}` },
 ];
+
+// your username + profile picture (shown on every post you make)
+const ProfileRow: Component = () => {
+  const [editing, setEditing] = createSignal(false);
+  const [text, setText] = createSignal('');
+  const [error, setError] = createSignal('');
+  const [color, setColor] = createSignal('#1a73e8');
+  getMyKeys().then((k) => setColor(avatarColor(k.publicKey))).catch(() => {});
+  const save = () => {
+    const err = setName(text());
+    if (err) setError(err);
+    else { setError(''); setEditing(false); }
+  };
+  return (
+    <div class="profile-row">
+      <label class="avatar-btn" title="Change profile picture" style={{ background: color() }}>
+        <Show when={avatar()} fallback={<span class="avatar-letter">{username().charAt(0).toUpperCase()}</span>}>
+          <img src={avatar()!} alt="" />
+        </Show>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={async (e) => {
+            const err = await setAvatarFile(e.currentTarget.files?.[0]);
+            setError(err ?? '');
+            e.currentTarget.value = '';
+          }}
+        />
+      </label>
+      <Show
+        when={editing()}
+        fallback={
+          <>
+            <span class="profile-name">{username()}</span>
+            <button class="link-btn" onClick={() => { setText(shortName(username()).slice(0, PROFILE.NAME_MAX_LETTERS)); setEditing(true); }}>
+              Edit name
+            </button>
+            <Show when={avatar()}>
+              <button class="link-btn" onClick={() => removeAvatar()}>Remove photo</button>
+            </Show>
+          </>
+        }
+      >
+        <input
+          class="name-input"
+          maxLength={PROFILE.NAME_MAX_LETTERS}
+          value={text()}
+          placeholder="Name"
+          autofocus
+          onInput={(e) => setText(e.currentTarget.value.replace(/[^A-Za-z]/g, ''))}
+          onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
+        />
+        <button class="link-btn" onClick={save}>Save</button>
+        <button class="link-btn" onClick={() => { setEditing(false); setError(''); }}>Cancel</button>
+      </Show>
+      <Show when={error()}>
+        <span class="profile-error">{error()}</span>
+      </Show>
+    </div>
+  );
+};
 
 const Pin = (props: { muted?: boolean }) => (
   <svg class="pin" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -50,6 +113,8 @@ export const PostComposer: Component = () => {
       </button>
 
       <Show when={!collapsed()}>
+        <ProfileRow />
+
         <div class="kind-tabs">
           <For each={KINDS}>
             {(k) => (
@@ -91,7 +156,12 @@ export const PostComposer: Component = () => {
               <img class="photo-preview" src={draft.previewUrl!} alt="" />
               <span class="photo-meta">
                 <span class="photo-change">Change</span>
-                <span class="image-size">{Math.max(1, Math.round(draft.imageBytes / 1024))} KB · JPEG XL</span>
+                <span class="image-size">
+                  {Math.max(1, Math.round(draft.imageBytes / 1024))} KB · JPEG XL
+                  <Show when={draft.originalBytes > draft.imageBytes}>
+                    {` · ${Math.round((1 - draft.imageBytes / draft.originalBytes) * 100)}% smaller`}
+                  </Show>
+                </span>
               </span>
             </Show>
             <input
@@ -150,7 +220,7 @@ export const PostComposer: Component = () => {
           title={missingForDraft(draft) ?? ''}
           onClick={() => postActions.submit()}
         >
-          {price() > 0 ? `Pay ${formatPrice(price())} & post` : 'Post for free'}
+          {busy() ? 'Posting…' : price() > 0 ? `Pay ${formatPrice(price())} & post` : 'Post for free'}
         </button>
 
         <Show when={message() || missingForDraft(draft)}>
@@ -158,7 +228,7 @@ export const PostComposer: Component = () => {
         </Show>
 
         <div class="composer-footer">
-          <span>{posts.length} post{posts.length === 1 ? '' : 's'} saved</span>
+          <span>{posts.length} post{posts.length === 1 ? '' : 's'} on the map</span>
           <span class="footer-actions">
             <Show when={hasDraftContent()}>
               <button class="link-btn" onClick={() => postActions.cancelDraft()}>Cancel</button>
